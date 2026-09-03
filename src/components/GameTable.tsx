@@ -28,12 +28,17 @@ import {
   UserMinus,
   Bot,
   DoorOpen,
+  X,
+  Eye,
+  Layers,
 } from 'lucide-react';
 
 interface GameTableProps {
   state: GameState;
   myPlayerId: string;
   isHost: boolean;
+  /** true when myPlayerId isn't seated in state.players — watch only, no actions. */
+  isSpectator?: boolean;
   revolutionDeclined: boolean;
   chat: ChatMessage[];
   turnDeadline?: number | null;
@@ -41,6 +46,8 @@ interface GameTableProps {
   onReturnToLobby?: () => void;
   onKick?: (playerId: string, kind: 'remove' | 'ai') => void;
   onLeaveTable?: () => void;
+  /** Ask to leave once this hand ends (true), or cancel that request (false). Hidden for the host. */
+  onScheduleLeave?: (queued: boolean) => void;
   kickedNotice?: { kind: 'remove' | 'ai' } | null;
   onSendChat: (text: string) => void;
   onPlay: (cards: CardType[]) => void;
@@ -72,6 +79,7 @@ export function GameTable(props: GameTableProps) {
     state,
     myPlayerId,
     isHost,
+    isSpectator = false,
     revolutionDeclined,
     chat,
     turnDeadline,
@@ -79,6 +87,7 @@ export function GameTable(props: GameTableProps) {
     onReturnToLobby,
     onKick,
     onLeaveTable,
+    onScheduleLeave,
     kickedNotice,
     onSendChat,
     onPlay,
@@ -108,6 +117,7 @@ export function GameTable(props: GameTableProps) {
   // once this player actually becomes the current player.
   const [passQueued, setPassQueued] = useState(false);
   const [kickTarget, setKickTarget] = useState<string | null>(null);
+  const [showLeaveDialog, setShowLeaveDialog] = useState(false);
 
   const prevPhaseRef = useRef(state.phase);
   const prevHandIdsRef = useRef<Set<string>>(new Set(myPlayer?.hand.map((c) => c.id) ?? []));
@@ -347,11 +357,26 @@ export function GameTable(props: GameTableProps) {
     );
   }
 
-  if (!myPlayer) {
+  /* -------- spectator: not seated in this game (joined late / lobby overflow) -------- */
+  if (!myPlayer || isSpectator) {
+    if (state.phase === 'hand-end') {
+      return (
+        <HandEndScreen
+          state={state}
+          myPlayerId={myPlayerId}
+          isHost={false}
+          onNextHand={onNextHand}
+          onBackToLobby={onBackToLobby}
+        />
+      );
+    }
     return (
-      <div className="h-screen flex items-center justify-center text-amber-200 font-serif" style={{ fontSize: 'var(--font-xl)' }}>
-        Waiting for the deal…
-      </div>
+      <SpectatorView
+        state={state}
+        chat={chat}
+        onSendChat={onSendChat}
+        onBackToLobby={onBackToLobby}
+      />
     );
   }
 
@@ -468,7 +493,7 @@ export function GameTable(props: GameTableProps) {
           </button>
           {onBackToLobby && (
             <button
-              onClick={onBackToLobby}
+              onClick={() => setShowLeaveDialog(true)}
               className="flex items-center gap-1 px-2.5 py-1.5 bg-red-900/70 hover:bg-red-800 text-amber-100 rounded-lg border border-red-400/30"
               style={{ fontSize: 'var(--font-xs)' }}
             >
@@ -478,6 +503,21 @@ export function GameTable(props: GameTableProps) {
         </div>
       </header>
 
+      {showLeaveDialog && (
+        <LeaveDialog
+          canScheduleLeave={!isHost && !!onScheduleLeave}
+          onLeaveNow={() => {
+            setShowLeaveDialog(false);
+            (onLeaveTable ?? onBackToLobby)?.();
+          }}
+          onScheduleLeave={() => {
+            setShowLeaveDialog(false);
+            onScheduleLeave?.(true);
+          }}
+          onCancel={() => setShowLeaveDialog(false)}
+        />
+      )}
+
       {/* ---------------- message banner ---------------- */}
       <div className="shrink-0 relative z-20 bg-purple-950/50 border-b border-amber-400/20 py-1 px-3 text-center">
         <p className="font-serif text-amber-100 truncate" style={{ fontSize: 'var(--font-sm)' }}>
@@ -485,8 +525,34 @@ export function GameTable(props: GameTableProps) {
         </p>
       </div>
 
+      {/* ---------------- "leave scheduled" persistent notice ---------------- */}
+      {myPlayer.leavingAfterRound && (
+        <div className="shrink-0 relative z-20 bg-amber-900/60 border-b border-amber-400/40 py-1.5 px-3 flex items-center justify-center gap-3 flex-wrap">
+          <p className="font-serif text-amber-100 flex items-center gap-1.5" style={{ fontSize: 'var(--font-xs)' }}>
+            <DoorOpen size="1em" /> Leave Scheduled — you will leave once this round ends.
+          </p>
+          {onScheduleLeave && (
+            <button
+              onClick={() => onScheduleLeave(false)}
+              className="px-2.5 py-0.5 rounded-full bg-amber-500 hover:bg-amber-400 text-purple-950 font-serif font-bold border border-amber-200"
+              style={{ fontSize: 'var(--font-tiny)' }}
+            >
+              Cancel Planned Leave
+            </button>
+          )}
+        </div>
+      )}
+
       {/* ---------------- table ---------------- */}
       <main className="flex-1 relative min-h-0 z-10">
+        {isSpectator && (
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 pointer-events-none slide-up">
+            <p className="font-serif italic text-sky-200 bg-black/50 border border-sky-400/40 rounded-full px-4 py-1 flex items-center gap-2" style={{ fontSize: 'var(--font-xs)' }}>
+              <Eye size="1em" /> Spectating — a seat will open once this game ends.
+            </p>
+          </div>
+        )}
+
         {reveal && (
           <div className="absolute left-1/2 top-[4%] -translate-x-1/2 z-40 pointer-events-none fade-in">
             <div className="flex flex-col items-center gap-1.5 px-5 py-2.5 rounded-xl bg-black/70 border-2 border-amber-400/70 shadow-2xl backdrop-blur-sm">
@@ -739,16 +805,6 @@ export function GameTable(props: GameTableProps) {
               </div>
             )}
 
-            {/* the hourglass + YOUR TURN, directly beneath the pile */}
-            {state.phase === 'playing' && state.timerEnabled && turnDeadline != null && (
-              <HourglassTimer key={state.turnStartedAt} deadline={turnDeadline} totalMs={state.timerSeconds * 1000} />
-            )}
-            {isMyTurn && (
-              <div className="turn-banner">
-                <Swords size="1em" /> YOUR TURN
-              </div>
-            )}
-
             {canCallRevolution && (
               <div className="bg-gradient-to-br from-red-950 to-red-800 border-2 border-amber-400 rounded-xl p-3 text-center shadow-2xl max-w-[22rem] fade-in">
                 <p className="text-amber-300 font-serif font-bold mb-1" style={{ fontSize: 'var(--font-base)' }}>
@@ -777,45 +833,62 @@ export function GameTable(props: GameTableProps) {
                 </div>
               </div>
             )}
+
+            {/* Hourglass + remaining seconds + YOUR TURN belong to the table.
+                They sit at the bottom of the table area, above the hand, and
+                can never be covered by the player's cards. */}
+            {state.phase === 'playing' && state.timerEnabled && turnDeadline != null && (
+              <HourglassTimer key={state.turnStartedAt} deadline={turnDeadline} totalMs={state.timerSeconds * 1000} />
+            )}
+            {isMyTurn && (
+              <div className="turn-banner">
+                <Swords size="1em" /> YOUR TURN
+              </div>
+            )}
           </div>
         </div>
       </main>
 
-      {/* ---------------- footer: status, actions, hand ---------------- */}
-      <footer className="shrink-0 relative z-30 bg-black/50 backdrop-blur border-t-2 border-amber-400/30">
-        {/* status row */}
-        <div className="px-3 py-1 flex items-center justify-between gap-2 border-b border-white/5 min-h-[2.4rem]">
-          <ActionBarStatus
-            state={state}
-            myPlayer={myPlayer}
-            isMyTurn={isMyTurn}
-            myTributeDue={!!myTributeDue}
-            iAmGD={iAmGD}
-            tributeCount={tributeCount}
-            selectedCount={selectedCards.length}
-            dealing={dealing}
-          />
-          <div className="flex items-center gap-3">
-            <p className="text-amber-100/70 font-serif whitespace-nowrap" style={{ fontSize: 'var(--font-xs)' }}>
-              {myPlayer.hand.length} cards
-            </p>
+      {/* ---------------- footer: compact control bar + hand ---------------- */}
+      <footer className="shrink-0 relative z-30 bg-black/55 backdrop-blur border-t-2 border-amber-400/30">
+        {/* Control bar — three zones, kept optically balanced in every phase:
+              [ Turn status ]   [ Actions ]   [ Card count ]
+            The side columns are equal-width (1fr) so the action group is
+            genuinely centred, no matter how long the status text runs or
+            whether buttons are present at all (seating / dealing / out). */}
+        <div
+          className={cn(
+            'px-2.5 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1 border-b border-amber-400/20',
+            inTaxes && myTributeDue ? 'py-1.5' : 'py-1'
+          )}
+        >
+          {/* zone 1 — turn status, left */}
+          <div className="min-w-0 justify-self-start">
+            <ActionBarStatus
+              state={state}
+              myPlayer={myPlayer}
+              isMyTurn={isMyTurn}
+              myTributeDue={!!myTributeDue}
+              iAmGD={iAmGD}
+              tributeCount={tributeCount}
+              selectedCount={selectedCards.length}
+              dealing={dealing}
+            />
           </div>
-        </div>
 
-        {/* action buttons — directly above the hand */}
-        {(state.phase === 'playing' || inTaxes) && !myPlayer.isOut && (
-          <div className="flex justify-center gap-2 px-2 pt-2 flex-wrap">
+          {/* zone 2 — all turn actions, centred as a group */}
+          <div className="justify-self-center flex items-center gap-2 flex-wrap justify-center">
             {inTaxes && myTributeDue ? (
               <button
                 onClick={() => onTribute(selectedCards)}
                 disabled={selectedCards.length !== tributeCount}
                 className={cn(
-                  'flex items-center gap-2 px-5 py-2 rounded-xl font-serif font-bold shadow-lg border-2 transition-all',
+                  'flex items-center gap-1.5 px-4 py-1.5 rounded-lg font-serif font-bold shadow border-2 transition-all',
                   selectedCards.length === tributeCount
-                    ? 'bg-amber-500 hover:bg-amber-400 text-purple-950 border-amber-300 hover:-translate-y-0.5'
+                    ? 'bg-amber-500 hover:bg-amber-400 text-purple-950 border-amber-300'
                     : 'bg-stone-700/50 text-stone-400 border-stone-600/50 cursor-not-allowed'
                 )}
-                style={{ fontSize: 'var(--font-base)' }}
+                style={{ fontSize: 'var(--font-sm)' }}
               >
                 <Coins size="1em" /> Give Tribute ({selectedCards.length}/{tributeCount})
               </button>
@@ -825,16 +898,16 @@ export function GameTable(props: GameTableProps) {
                   onClick={handlePassButton}
                   disabled={!canUsePassQueue}
                   className={cn(
-                    'relative px-6 py-2 rounded-xl font-serif font-bold shadow-lg border-2 transition-all',
+                    'relative px-4 py-1.5 rounded-lg font-serif font-bold shadow border-2 transition-all',
                     passQueued
                       ? 'bg-amber-500 hover:bg-amber-400 text-purple-950 border-amber-100 pass-queue-glow'
                       : isMyTurn
-                      ? 'bg-red-800 hover:bg-red-700 text-amber-50 border-red-500 hover:-translate-y-0.5'
+                      ? 'bg-red-800 hover:bg-red-700 text-amber-50 border-red-500'
                       : canUsePassQueue
-                      ? 'bg-stone-700/80 hover:bg-stone-600 text-amber-100 border-stone-400 hover:-translate-y-0.5'
+                      ? 'bg-stone-700/80 hover:bg-stone-600 text-amber-100 border-stone-400'
                       : 'bg-stone-700/40 text-stone-400 border-stone-600/40 cursor-not-allowed'
                   )}
-                  style={{ fontSize: 'var(--font-base)' }}
+                  style={{ fontSize: 'var(--font-sm)' }}
                   title={
                     passQueued
                       ? 'Click to cancel the queued pass'
@@ -845,32 +918,40 @@ export function GameTable(props: GameTableProps) {
                 >
                   {passQueued ? 'PASS ✓ QUEUED' : isMyTurn ? 'Pass' : 'Queue Pass'}
                 </button>
-                {passQueued && (
-                  <span className="self-center font-serif italic text-amber-200 pass-queue-label" style={{ fontSize: 'var(--font-xs)' }}>
-                    Pass queued
-                  </span>
-                )}
                 <button
                   onClick={handlePlayButton}
                   disabled={!isMyTurn || !playValid}
                   className={cn(
-                    'px-6 py-2 rounded-xl font-serif font-bold shadow-lg border-2 transition-all',
+                    'px-4 py-1.5 rounded-lg font-serif font-bold shadow border-2 transition-all',
                     isMyTurn && playValid
-                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-300 hover:-translate-y-0.5'
+                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-300'
                       : 'bg-stone-700/40 text-stone-400 border-stone-600/40 cursor-not-allowed'
                   )}
-                  style={{ fontSize: 'var(--font-base)' }}
+                  style={{ fontSize: 'var(--font-sm)' }}
                 >
                   {selectedCards.length > 0 ? `Play ${describeSet(selectedCards)}` : 'Play'}
                 </button>
               </>
             ) : null}
           </div>
-        )}
 
-        {/* the hand — always fully visible */}
-        <div className="px-2 py-2 overflow-x-auto">
-          <div className="flex justify-center items-end min-h-[calc(var(--card-h)_+_1.8rem)] pt-4 min-w-min">
+          {/* zone 3 — remaining card count, right */}
+          <div className="min-w-0 justify-self-end text-right">
+            <span
+              className="inline-flex items-center gap-1.5 font-serif text-amber-100/70 whitespace-nowrap"
+              style={{ fontSize: 'var(--font-xs)' }}
+              title="Cards remaining in your hand"
+            >
+              <Layers size="1em" className="opacity-70 shrink-0" aria-hidden />
+              {myPlayer.hand.length} cards
+            </span>
+          </div>
+        </div>
+
+        {/* the hand — always fully visible. Extra top padding leaves room for
+            selected cards to lift without being clipped by the container. */}
+        <div className="px-2 pt-8 pb-1.5 overflow-x-auto">
+          <div className="flex justify-center items-end min-h-[calc(var(--card-h)_+_0.75rem)] min-w-min">
             {visibleHand.length === 0 && !dealing && !seating && (
               <p className="text-amber-200/70 font-serif italic py-8" style={{ fontSize: 'var(--font-sm)' }}>
                 Your hand is empty — you are out for this deal.
@@ -891,9 +972,10 @@ export function GameTable(props: GameTableProps) {
               return (
                 <div
                   key={card.id}
-                  className="relative"
+                  // Fixed stacking order (no z-index bump on selection) so a
+                  // selected card can never cover its neighbours' hit areas.
                   style={{
-                    zIndex: isSel ? 200 + i : i,
+                    zIndex: i,
                     marginLeft: i === 0 ? undefined : overlap,
                   }}
                 >
@@ -1053,7 +1135,7 @@ function ActionBarStatus({
   return (
     <p className="text-amber-100 font-serif" style={{ fontSize: 'var(--font-sm)' }}>
       {isMyTurn ? (
-        <span className="font-bold text-amber-300">Your turn — play or pass below</span>
+        <span className="font-bold text-amber-300">Your turn</span>
       ) : (
         <>
           Waiting on{' '}
@@ -1137,6 +1219,7 @@ function OpponentRing({
               state.pendingTaxes.lesserDalmutiCardGiven === null));
         const passed = state.passedIds.includes(opp.id);
         const afk = state.afkCounts[opp.id] ?? 0;
+        const leaving = !!opp.leavingAfterRound;
 
         const shownCount = dealing && dealtFor ? dealtFor(seatIdx) : opp.hand.length;
         const shown = Math.min(shownCount, 7);
@@ -1184,8 +1267,13 @@ function OpponentRing({
                   ? 'choosing tribute…'
                   : `${opp.role ? getRoleName(opp.role) + ' · ' : ''}${shownCount} cards`}
               </p>
-              {/* badges: PASSED / AFK / kick */}
+              {/* badges: PASSED / AFK / leaving / kick */}
               <div className="flex items-center justify-center gap-1 mt-0.5 min-h-[1.2em] flex-wrap">
+                {leaving && (
+                  <span className="inline-flex items-center gap-1 px-1.5 rounded-full bg-amber-800/90 border border-amber-300/70 text-amber-50 font-heading font-bold" style={{ fontSize: 'var(--font-tiny)' }}>
+                    <DoorOpen size="1em" /> Leaving After This Round
+                  </span>
+                )}
                 {passed && !opp.isOut && (
                   <span className="inline-flex items-center gap-1 px-1.5 rounded-full bg-stone-700/90 border border-stone-400/70 text-stone-100 font-heading font-bold" style={{ fontSize: 'var(--font-tiny)' }}>
                     <Ban size="1em" /> PASSED
@@ -1226,6 +1314,183 @@ function OpponentRing({
         );
       })}
     </>
+  );
+}
+
+function LeaveDialog({
+  canScheduleLeave,
+  onLeaveNow,
+  onScheduleLeave,
+  onCancel,
+}: {
+  canScheduleLeave: boolean;
+  onLeaveNow: () => void;
+  onScheduleLeave: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onCancel} />
+      <div className="relative bg-gradient-to-br from-amber-50 to-amber-100 rounded-2xl border-4 border-purple-900/40 p-6 max-w-sm w-full slide-up text-center">
+        <button onClick={onCancel} className="absolute top-3 right-3 text-amber-800/70 hover:text-amber-950" aria-label="Close">
+          <X size="1.2rem" />
+        </button>
+        <DoorOpen className="mx-auto mb-2 text-purple-800" size="2.4rem" />
+        <p className="font-heading font-black text-purple-900 italic mb-4" style={{ fontSize: 'var(--font-base)' }}>
+          Leave Game
+        </p>
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={onLeaveNow}
+            className="w-full py-2.5 flex items-center justify-center gap-2 bg-red-800 hover:bg-red-700 text-red-50 rounded-lg font-serif font-bold"
+            style={{ fontSize: 'var(--font-sm)' }}
+          >
+            <LogOut size="1em" /> Leave Now
+          </button>
+          {canScheduleLeave && (
+            <button
+              onClick={onScheduleLeave}
+              className="w-full py-2.5 flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-400 text-purple-950 rounded-lg font-serif font-bold border-2 border-amber-300"
+              style={{ fontSize: 'var(--font-sm)' }}
+            >
+              <DoorOpen size="1em" /> Leave After This Round
+            </button>
+          )}
+          <button
+            onClick={onCancel}
+            className="w-full py-2.5 bg-stone-200 hover:bg-stone-300 text-stone-800 rounded-lg font-serif font-bold"
+            style={{ fontSize: 'var(--font-sm)' }}
+          >
+            Cancel
+          </button>
+        </div>
+        {canScheduleLeave && (
+          <p className="font-serif italic text-amber-800/80 mt-3" style={{ fontSize: 'var(--font-tiny)' }}>
+            Leaving after this round keeps you seated until the current hand ends, then you're
+            removed from the lobby automatically. You can change your mind any time before then.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Read-only view for a joined-but-unseated observer (lobby overflow, or joined mid-game). */
+function SpectatorView({
+  state,
+  chat,
+  onSendChat,
+  onBackToLobby,
+}: {
+  state: GameState;
+  chat: ChatMessage[];
+  onSendChat: (text: string) => void;
+  onBackToLobby?: () => void;
+}) {
+  const [showScore, setShowScore] = useState(false);
+  const [showChat, setShowChat] = useState(false);
+  const n = state.players.length;
+
+  return (
+    <div className="fixed inset-0 flex flex-col overflow-hidden">
+      <div className="great-table z-[1]" />
+
+      {showScore && <ScorePanel state={state} myPlayerId="" onClose={() => setShowScore(false)} />}
+      <ChatPanel open={showChat} messages={chat} myName="Spectator" onSend={onSendChat} onClose={() => setShowChat(false)} />
+
+      <header className="shrink-0 relative z-30 bg-black/45 backdrop-blur border-b border-amber-400/25 px-3 py-1.5 flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <h1 className="font-heading italic font-bold text-amber-300 leading-none truncate" style={{ fontSize: 'var(--font-lg)' }}>
+            The Great Dalmuti
+          </h1>
+          <p className="text-amber-100/60 leading-tight" style={{ fontSize: 'var(--font-xs)' }}>Hand {state.handNumber}</p>
+        </div>
+        <div className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-sky-400/10 border border-sky-400/30">
+          <Eye size="1em" className="text-sky-300" />
+          <p className="font-serif font-bold text-sky-300" style={{ fontSize: 'var(--font-sm)' }}>Spectating</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowScore(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-purple-950 font-serif font-bold rounded-lg shadow-md border-2 border-amber-900/30"
+            style={{ fontSize: 'var(--font-sm)' }}
+          >
+            <Trophy size="1em" /> Scores
+          </button>
+          <button
+            onClick={() => setShowChat(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-700 hover:bg-purple-600 text-amber-100 font-serif font-bold rounded-lg shadow-md border-2 border-amber-400/30"
+            style={{ fontSize: 'var(--font-sm)' }}
+          >
+            <MessageCircle size="1em" /> Chat
+          </button>
+          {onBackToLobby && (
+            <button
+              onClick={onBackToLobby}
+              className="flex items-center gap-1 px-2.5 py-1.5 bg-red-900/70 hover:bg-red-800 text-amber-100 rounded-lg border border-red-400/30"
+              style={{ fontSize: 'var(--font-xs)' }}
+            >
+              <LogOut size="1em" /> Leave
+            </button>
+          )}
+        </div>
+      </header>
+
+      <div className="shrink-0 relative z-20 bg-purple-950/50 border-b border-amber-400/20 py-1 px-3 text-center">
+        <p className="font-serif text-amber-100 truncate" style={{ fontSize: 'var(--font-sm)' }}>{state.message}</p>
+      </div>
+
+      <main className="flex-1 relative min-h-0 z-10">
+        <OpponentRing
+          opponents={state.players}
+          state={state}
+          dealing={state.phase === 'dealing'}
+          myIdx={-1}
+          totalPlayers={n}
+          canKick={false}
+          onKick={() => {}}
+          dealtFor={null}
+        />
+
+        <div className="absolute inset-0 flex items-center justify-center px-2 pointer-events-none">
+          <div className="rounded-2xl px-5 py-3 bg-black/25 border border-amber-400/20 shadow-inner flex flex-col items-center gap-2 pointer-events-auto">
+            {state.phase === 'taxes' && state.pendingTaxes ? (
+              <TaxCentre state={state} myPlayerId="" />
+            ) : state.lastValidPlay ? (
+              <>
+                <p className="text-amber-200 font-serif text-center" style={{ fontSize: 'var(--font-sm)' }}>
+                  <span className="font-bold text-amber-300">
+                    {state.players.find((p) => p.id === state.lastValidPlay!.playerId)?.name ?? 'Someone'}
+                  </span>{' '}
+                  played {describeSet(state.lastValidPlay.cards)}
+                </p>
+                <div className="flex">
+                  {state.lastValidPlay.cards.map((c, i) => (
+                    <div key={c.id} className={i > 0 ? '-ml-5' : ''} style={{ zIndex: i }}>
+                      <Card card={c} size="lg" />
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <>
+                <CardBackFace size="lg" className="opacity-40" />
+                <p className="text-amber-200/70 italic font-serif" style={{ fontSize: 'var(--font-xs)' }}>
+                  {state.phase === 'dealing' ? 'Dealing the deck…' : state.phase === 'seating' ? 'Drawing for seats…' : 'Table is clear'}
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      </main>
+
+      <footer className="shrink-0 relative z-30 bg-black/50 backdrop-blur border-t-2 border-amber-400/30 py-3 text-center">
+        <p className="font-serif italic text-amber-200/80" style={{ fontSize: 'var(--font-xs)' }}>
+          <Eye size="1em" className="inline mr-1.5 -mt-0.5" />
+          You're watching this game. A seat will open up once it ends.
+        </p>
+      </footer>
+    </div>
   );
 }
 

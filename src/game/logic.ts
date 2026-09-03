@@ -142,10 +142,16 @@ export function drawForSeats(players: Player[]): { ordered: Player[]; draws: Sea
  * A fresh game: the players draw for seats, then the whole deck is dealt.
  * The table shows the 'seating' reveal first, then the 'dealing' animation,
  * and only then moves on to taxation.
+ *
+ * `opts.cardSet` — name of the PNG card set the host picked in the lobby.
+ *   Defaults to "classic" (or whatever the bundle discovered as the default).
+ * `opts.joinTimestamps` — clientId → first-connection timestamp.
+ *   Pre-seeded for the host and any Direct-Connect guests already connected.
+ *   Guests with no entry get timestamped when they first send a 'join' message.
  */
 export function initializeNewGame(
   players: Player[],
-  opts: { timerEnabled?: boolean; timerSeconds?: number } = {}
+  opts: { timerEnabled?: boolean; timerSeconds?: number; cardSet?: string; joinTimestamps?: Record<string, number> } = {}
 ): GameState {
   const { ordered, draws } = drawForSeats(players.map((p) => ({ ...p, hand: [] })));
   const dealt = dealHands(ordered);
@@ -170,7 +176,33 @@ export function initializeNewGame(
     afkCounts: {},
     passedIds: [],
     seatingDraw: draws,
+    cardSet: opts.cardSet ?? 'classic',
+    joinTimestamps: opts.joinTimestamps ?? {},
   };
+}
+
+/**
+ * Pick the longest-connected non-AI, non-kicked player id from the game state.
+ * Falls back to the first human player in seat order when no timestamps exist.
+ * Used by host-transfer logic on both transports.
+ */
+export function pickNextHost(state: GameState, excludeIds?: Set<string>): string | null {
+  const candidates = state.players.filter(
+    (p) =>
+      !p.id.startsWith('ai-') &&
+      !p.kicked &&
+      !p.dropped &&
+      (!excludeIds || !excludeIds.has(p.id))
+  );
+  if (candidates.length === 0) return null;
+
+  // Prefer explicit timestamps (set by the host when the player first joined).
+  const withTs = candidates
+    .filter((p) => state.joinTimestamps[p.id])
+    .sort((a, b) => state.joinTimestamps[a.id] - state.joinTimestamps[b.id]);
+  if (withTs.length > 0) return withTs[0].id;
+
+  return candidates[0].id;
 }
 
 /**
@@ -213,6 +245,24 @@ export function applyKick(
         : s.currentPlayerIndex;
     }
   }
+  return s;
+}
+
+/**
+ * A player may ask to leave once the current hand ends (or cancel that
+ * request). Purely a flag on their seat — visible to everyone via the
+ * synced GameState — that the app's networking layer watches to perform the
+ * real disconnect the moment `phase` becomes `'hand-end'`.
+ */
+export function setLeaveIntent(state: GameState, playerId: string, queued: boolean): GameState {
+  const s = structuredClone(state);
+  const idx = s.players.findIndex((p) => p.id === playerId);
+  if (idx === -1) return state;
+  if (!!s.players[idx].leavingAfterRound === queued) return state;
+  s.players[idx].leavingAfterRound = queued;
+  s.message = queued
+    ? `🚪 ${s.players[idx].name} will leave after this round.`
+    : `${s.players[idx].name} changed their mind and is staying.`;
   return s;
 }
 
@@ -518,6 +568,13 @@ export function applyPlay(state: GameState, playerId: string, cards: Card[]): Ga
       s.players[remIdx].finishOrder = outCount + 1;
     }
     recordHandResult(s);
+    // Anyone who scheduled a "leave after this round" departs for good now —
+    // reseatForNextHand already drops seats flagged `dropped`, and the
+    // networking layer watches `leavingAfterRound` to perform the real
+    // disconnect the instant this hand-end screen appears.
+    for (const p of s.players) {
+      if (p.leavingAfterRound) p.dropped = true;
+    }
     s.phase = 'hand-end';
     s.message = 'The hand is over! Points have been awarded.';
     return s;

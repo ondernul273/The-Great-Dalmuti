@@ -20,6 +20,7 @@ import {
   traceFinish,
   traceIsActive,
 } from '../net/joinTrace';
+import { CLIENT_ID } from '../net/identity';
 
 export type PeerStatus = 'idle' | 'connecting' | 'hosting' | 'connected' | 'error';
 
@@ -38,6 +39,8 @@ export interface ConnectedPeer {
 
 interface UseMultiplayerOptions {
   onMessage: (msg: PeerMessage) => void;
+  /** Fired when every connection has dropped while the hook was not mid-reset (i.e. an unexpected loss). */
+  onAllConnectionsLost?: () => void;
 }
 
 /* ------------------------------------------------------------------ */
@@ -214,7 +217,7 @@ function wireDisconnectedHandling(peer: Peer, label: string): void {
   });
 }
 
-export function useMultiplayer({ onMessage }: UseMultiplayerOptions) {
+export function useMultiplayer({ onMessage, onAllConnectionsLost }: UseMultiplayerOptions) {
   const [status, setStatus] = useState<PeerStatus>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [myId, setMyId] = useState<string>('');
@@ -231,6 +234,8 @@ export function useMultiplayer({ onMessage }: UseMultiplayerOptions) {
   const detachDiagRef = useRef<(() => void) | null>(null);
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
+  const onAllConnectionsLostRef = useRef(onAllConnectionsLost);
+  onAllConnectionsLostRef.current = onAllConnectionsLost;
 
   useEffect(() => {
     log('hook mounted — ICE servers in use:', ICE_SERVERS);
@@ -292,11 +297,13 @@ export function useMultiplayer({ onMessage }: UseMultiplayerOptions) {
         log(`${label}: connection 'close' with ${conn.peer}`);
         connectionsRef.current.delete(conn.peer);
         syncPeers();
+        if (connectionsRef.current.size === 0) onAllConnectionsLostRef.current?.();
       });
       conn.on('error', (e) => {
         err(`${label}: connection 'error' with ${conn.peer} — ${peerErrorLog(e)}`);
         connectionsRef.current.delete(conn.peer);
         syncPeers();
+        if (connectionsRef.current.size === 0) onAllConnectionsLostRef.current?.();
       });
     },
     [syncPeers]
@@ -323,14 +330,18 @@ export function useMultiplayer({ onMessage }: UseMultiplayerOptions) {
 
   /* ------------------------------- HOST ------------------------------- */
 
-  const initializeHostWithCode = useCallback(async (): Promise<string> => {
+  const initializeHostWithCode = useCallback(async (forcedCode?: string): Promise<string> => {
     resetForAttempt();
     setStatus('connecting');
     traceStart('HOST');
-    log('HOST: registering a room…');
+    log(forcedCode ? `HOST: re-registering saved room "${forcedCode}"…` : 'HOST: registering a room…');
 
-    for (let attempt = 1; attempt <= MAX_HOST_ATTEMPTS; attempt++) {
-      const code = genCode();
+    // Resuming a session reuses the exact same code (and thus peer id) so
+    // guests who still have it cached can reconnect to the same address;
+    // otherwise generate fresh codes and retry on collision as before.
+    const attempts = forcedCode ? 1 : MAX_HOST_ATTEMPTS;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const code = forcedCode ?? genCode();
       const hostId = hostIdFromCode(code);
       log(`HOST: attempt ${attempt}/${MAX_HOST_ATTEMPTS} — code "${code}" → id "${hostId}"`);
       try {
@@ -465,7 +476,7 @@ export function useMultiplayer({ onMessage }: UseMultiplayerOptions) {
       const msg: PeerMessage = {
         type: 'join',
         from: idRef.current,
-        payload: { name: guestName },
+        payload: { name: guestName, clientId: CLIENT_ID },
         timestamp: Date.now(),
       };
       conn.send(JSON.stringify(msg));

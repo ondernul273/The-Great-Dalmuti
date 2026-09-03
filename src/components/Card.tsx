@@ -1,13 +1,9 @@
-import { useSyncExternalStore } from 'react';
 import type { Card as CardType } from '../game/types';
 import { CARD_INFO } from '../game/cards';
 import { cn } from '../utils/cn';
 import {
-  cardArtUrl,
-  cardArtVersion,
   markArtBroken,
-  subscribeToCardArt,
-  type CardSlot,
+  useCardArt,
 } from './cardAssets';
 import facesSheet from '../assets/cards/faces.jpg';
 import extrasSheet from '../assets/cards/extras.jpg';
@@ -71,15 +67,6 @@ const SIZE_VARS = {
   lg: { w: 'var(--card-w-lg)', h: 'var(--card-h-lg)', corner: 'var(--font-sm)', title: 'var(--font-xs)', plate: 'var(--font-xs)' },
   md: { w: 'var(--card-w)', h: 'var(--card-h)', corner: 'var(--font-xs)', title: 'var(--font-tiny)', plate: 'var(--font-tiny)' },
 } as const;
-
-/**
- * Subscribes to the artwork registry so cards re-render when a runtime pack
- * arrives or a PNG turns out to be broken.
- */
-function useCardArt(slot: CardSlot): string | null {
-  useSyncExternalStore(subscribeToCardArt, cardArtVersion, cardArtVersion);
-  return cardArtUrl(slot);
-}
 
 /* ------------------------------------------------------------------ */
 /*  Card back                                                          */
@@ -150,7 +137,10 @@ export function Card({ card, faceDown, selected, dimmed, size = 'md', onClick, c
       title={`${label} (${isJester ? 'Wild' : card.rank})`}
       className={cn(
         'relative rounded-md border shadow-md transition-all duration-150 select-none overflow-hidden border-stone-400/80',
-        selected && '-translate-y-3 ring-2 ring-amber-400 shadow-amber-400/60 shadow-lg z-20',
+        // Selected cards lift straight up and glow, but deliberately keep their
+        // original stacking order (no z-index) so they never slide in front of a
+        // neighbouring card and steal its click area.
+        selected && '-translate-y-7 ring-[3px] ring-amber-300 shadow-[0_0_20px_4px_rgba(252,211,77,0.55)]',
         dimmed && 'opacity-45 saturate-50',
         onClick && !selected && 'hover:-translate-y-1.5 hover:shadow-xl cursor-pointer',
         !onClick && 'cursor-default',

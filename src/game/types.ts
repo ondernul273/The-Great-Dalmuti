@@ -25,6 +25,10 @@ export interface Player {
   kicked?: boolean;
   /** seat disappears at the next reseat */
   dropped?: boolean;
+  /** player asked to leave once the current hand finishes (visible to everyone) */
+  leavingAfterRound?: boolean;
+  /** true once this seat has been reclaimed by a live connection (reconnect bookkeeping) */
+  connected?: boolean;
 }
 
 export type Phase =
@@ -102,6 +106,10 @@ export interface GameState {
   passedIds: string[];
   /** the opening draw for seats, in seat order (Greater Dalmuti first); null after hand 1 */
   seatingDraw: SeatDraw[] | null;
+  /** name of the card set in use — travels with the game state so guests stay in sync */
+  cardSet: string;
+  /** clientId → epoch-ms of first connection. Lowest value = "longest connected"; used for host transfer. */
+  joinTimestamps: Record<string, number>;
   phase: Phase;
   players: Player[];
   deck: Card[];

@@ -28,6 +28,8 @@ export interface BanquetPlayer {
   isHost: boolean;
   ready: boolean;
   isAI: boolean;
+  /** false while a refreshed/dropped connection is within its reconnect grace period. */
+  connected?: boolean;
 }
 
 export interface BanquetLobby {
@@ -45,6 +47,11 @@ export type LobbySummary = BanquetLobby;
 
 export type ServerStatus = 'offline' | 'connecting' | 'online' | 'error';
 
+export interface LobbyStats {
+  activeLobbies: number;
+  playersOnline: number;
+}
+
 export interface BanquetView {
   serverStatus: ServerStatus;
   error: string | null;
@@ -53,6 +60,7 @@ export interface BanquetView {
   lobbies: LobbySummary[];
   listing: boolean;
   serverUrl: string;
+  stats: LobbyStats;
 }
 
 export interface LobbyChatLine {

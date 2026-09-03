@@ -3,10 +3,12 @@ import { io, type Socket } from 'socket.io-client';
 import type {
   BanquetLobby,
   LobbyChatLine,
+  LobbyStats,
   LobbySummary,
   NetMessage,
   ServerStatus,
 } from './types';
+import { CLIENT_ID } from './identity';
 
 /**
  * Transport #2 — "Banquet Browser": a Socket.IO relay server with public
@@ -39,6 +41,8 @@ interface Options {
   onLobbyChat: (line: Omit<LobbyChatLine, 'id' | 'ts'>) => void;
   onClosed: (reason: string) => void;
   onStarted?: () => void;
+  /** A previously-known player reconnected mid-game; the host should resend state. */
+  onPlayerReconnected?: (clientId: string) => void;
 }
 
 const CONNECT_TIMEOUT_MS = 9000;
@@ -56,26 +60,35 @@ const log = (...a: unknown[]) =>
 const errLog = (...a: unknown[]) =>
   console.error('%c[BANQUET]', 'color:#f87171;font-weight:bold', ...a);
 
-export function useSocketLobby({ onGameMessage, onLobbyChat, onClosed, onStarted }: Options) {
+export function useSocketLobby({
+  onGameMessage,
+  onLobbyChat,
+  onClosed,
+  onStarted,
+  onPlayerReconnected,
+}: Options) {
   const socketRef = useRef<Socket | null>(null);
   const [serverStatus, setServerStatus] = useState<ServerStatus>('offline');
   const [error, setError] = useState<string | null>(null);
-  const [myId, setMyId] = useState('');
+  // Stable across reconnects/refreshes — this is the identity the game uses,
+  // NOT the raw (and ever-changing) Socket.IO `socket.id`.
+  const [myId] = useState(CLIENT_ID);
   const [lobby, setLobby] = useState<BanquetLobby | null>(null);
   const [lobbies, setLobbies] = useState<LobbySummary[]>([]);
   const [listing, setListing] = useState(false);
+  const [stats, setStats] = useState<LobbyStats>({ activeLobbies: 0, playersOnline: 0 });
 
-  const cbRef = useRef({ onGameMessage, onLobbyChat, onClosed, onStarted });
-  cbRef.current = { onGameMessage, onLobbyChat, onClosed, onStarted };
+  const cbRef = useRef({ onGameMessage, onLobbyChat, onClosed, onStarted, onPlayerReconnected });
+  cbRef.current = { onGameMessage, onLobbyChat, onClosed, onStarted, onPlayerReconnected };
 
   /* ------------------------- socket lifecycle ------------------------- */
 
   const attach = useCallback((socket: Socket) => {
     socket.on('connect', () => {
-      log('connected to banquet server — socket id', socket.id);
-      setMyId(socket.id ?? '');
+      log('connected to banquet server — socket id', socket.id, '(clientId', CLIENT_ID, ')');
       setServerStatus('online');
       setError(null);
+      socket.emit('stats:get', {});
     });
     socket.on('connect_error', (e) => {
       errLog('connect_error —', e.message);
@@ -96,6 +109,12 @@ export function useSocketLobby({ onGameMessage, onLobbyChat, onClosed, onStarted
     socket.on('lobby:list', (p: { lobbies: LobbySummary[] }) => {
       setLobbies(p?.lobbies ?? []);
       setListing(false);
+    });
+    socket.on('stats:update', (p: LobbyStats) => {
+      if (p) setStats(p);
+    });
+    socket.on('lobby:playerReconnected', (p: { clientId: string }) => {
+      if (p?.clientId) cbRef.current.onPlayerReconnected?.(p.clientId);
     });
     socket.on('lobby:chat', (p: { name: string; text: string; system?: boolean }) => {
       cbRef.current.onLobbyChat({ name: p.name, text: p.text, system: p.system });
@@ -181,7 +200,7 @@ export function useSocketLobby({ onGameMessage, onLobbyChat, onClosed, onStarted
       setServerStatus('connecting');
       const socket = await whenConnected();
       log('lobby:create →', opts);
-      socket.emit('lobby:create', opts);
+      socket.emit('lobby:create', { ...opts, clientId: CLIENT_ID });
     },
     [whenConnected]
   );
@@ -208,7 +227,7 @@ export function useSocketLobby({ onGameMessage, onLobbyChat, onClosed, onStarted
       setServerStatus('connecting');
       const socket = await whenConnected();
       log('lobby:join →', lobbyId);
-      socket.emit('lobby:join', { lobbyId, password, name });
+      socket.emit('lobby:join', { lobbyId, password, name, clientId: CLIENT_ID });
     },
     [whenConnected]
   );
@@ -271,6 +290,7 @@ export function useSocketLobby({ onGameMessage, onLobbyChat, onClosed, onStarted
     lobby,
     lobbies,
     listing,
+    stats,
     createLobby,
     refreshLobbies,
     joinLobby,

@@ -6,6 +6,8 @@ import type { RosterEntry } from '../game/types';
 import { Card } from './Card';
 import { IceDiagnosticsBox, NetworkTestBox } from './NetworkPanel';
 import { RulesPanel } from './RulesPanel';
+import { StatsPanel } from './StatsPanel';
+import { cardSetLabel } from './cardAssets';
 import { cn } from '../utils/cn';
 import lobbyHall from '../assets/lobby-hall.jpg';
 import {
@@ -29,6 +31,7 @@ import {
   LogOut,
   Play,
   Users,
+  Trophy,
 } from 'lucide-react';
 
 interface LobbyProps {
@@ -42,6 +45,11 @@ interface LobbyProps {
   onTimerSeconds: (s: number) => void;
   maxSeats: number;
   minSeats: number;
+  /** Available card sets detected at build time. */
+  cardSets: string[];
+  /** Currently selected card set (host-controlled; guests read it from state). */
+  cardSet: string;
+  onCardSetChange: (name: string) => void;
   error?: string | null;
   /* direct connect (PeerJS) */
   status: PeerStatus;
@@ -108,6 +116,9 @@ export function Lobby(props: LobbyProps) {
     onTimerSeconds,
     maxSeats,
     minSeats,
+    cardSets,
+    cardSet,
+    onCardSetChange,
     error,
     status,
     roomCode,
@@ -145,6 +156,7 @@ export function Lobby(props: LobbyProps) {
   const [joinCode, setJoinCode] = useState('');
   const [numAI, setNumAI] = useState(3);
   const [showRules, setShowRules] = useState(false);
+  const [showStats, setShowStats] = useState(false);
 
   /* banquet form state */
   const [lobbyName, setLobbyName] = useState('');
@@ -186,6 +198,7 @@ export function Lobby(props: LobbyProps) {
       style={{ scrollbarGutter: 'stable' }}
     >
       {showRules && <RulesPanel onClose={() => setShowRules(false)} />}
+      {showStats && <StatsPanel onClose={() => setShowStats(false)} />}
 
       {/* Hall backdrop */}
       <div
@@ -290,6 +303,31 @@ export function Lobby(props: LobbyProps) {
               />
             </div>
 
+            <div className="mb-5">
+              <label className="block text-amber-900 font-serif font-bold mb-1" style={{ fontSize: 'var(--font-sm)' }}>
+                Card Set
+              </label>
+              {cardSets.length > 1 ? (
+                <select
+                  value={cardSet}
+                  onChange={(e) => onCardSetChange(e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-lg border-2 border-amber-700/30 bg-white/80 focus:border-amber-600 focus:outline-none font-serif text-amber-900 cursor-pointer"
+                  style={{ fontSize: 'var(--font-base)' }}
+                  title="The card art all players will see. Change before starting."
+                >
+                  {cardSets.map((s) => (
+                    <option key={s} value={s}>
+                      {cardSetLabel(s)}{s === 'classic' ? ' (default)' : ''}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p className="px-4 py-2.5 rounded-lg border-2 border-amber-300/60 bg-white/60 font-serif text-amber-900/70 italic" style={{ fontSize: 'var(--font-base)' }}>
+                  {cardSetLabel(cardSet)} — add more decks by dropping folders of PNGs into src/assets/cardsets/
+                </p>
+              )}
+            </div>
+
             {/* =============== MAIN MENU =============== */}
             {screen === 'menu' && (
               <div className="space-y-3">
@@ -322,13 +360,22 @@ export function Lobby(props: LobbyProps) {
                   />
                 </div>
 
-                <button
-                  onClick={() => setShowRules(true)}
-                  className="w-full py-2.5 flex items-center justify-center gap-2 rounded-lg border-2 border-amber-600/50 bg-white/50 hover:bg-white/80 text-amber-900 font-heading font-bold transition-colors"
-                  style={{ fontSize: 'var(--font-sm)' }}
-                >
-                  <BookOpen size="1.1em" /> Rules of the game &amp; example hands
-                </button>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setShowRules(true)}
+                    className="py-2.5 flex items-center justify-center gap-2 rounded-lg border-2 border-amber-600/50 bg-white/50 hover:bg-white/80 text-amber-900 font-heading font-bold transition-colors"
+                    style={{ fontSize: 'var(--font-sm)' }}
+                  >
+                    <BookOpen size="1.1em" /> Rules
+                  </button>
+                  <button
+                    onClick={() => setShowStats(true)}
+                    className="py-2.5 flex items-center justify-center gap-2 rounded-lg border-2 border-amber-600/50 bg-white/50 hover:bg-white/80 text-amber-900 font-heading font-bold transition-colors"
+                    style={{ fontSize: 'var(--font-sm)' }}
+                  >
+                    <Trophy size="1.1em" /> My Stats
+                  </button>
+                </div>
               </div>
             )}
 
@@ -862,10 +909,22 @@ function ServerStatusLine({ banquet }: { banquet: BanquetView }) {
       ? (banquet.error ?? 'server unreachable')
       : 'server not contacted yet';
   return (
-    <p className="flex items-center gap-2 text-amber-800 font-serif italic" style={{ fontSize: 'var(--font-tiny)' }}>
-      <span className={cn('w-2.5 h-2.5 rounded-full shrink-0', dot)} />
-      <span className="truncate">{label}</span>
-    </p>
+    <div className="space-y-1.5">
+      <p className="flex items-center gap-2 text-amber-800 font-serif italic" style={{ fontSize: 'var(--font-tiny)' }}>
+        <span className={cn('w-2.5 h-2.5 rounded-full shrink-0', dot)} />
+        <span className="truncate">{label}</span>
+      </p>
+      {banquet.serverStatus === 'online' && (
+        <div className="flex items-center gap-3 px-3 py-1.5 rounded-lg bg-purple-900/10 border border-purple-900/20 w-fit">
+          <span className="inline-flex items-center gap-1.5 text-purple-900 font-serif font-bold" style={{ fontSize: 'var(--font-xs)' }}>
+            <Swords size="1em" /> Active Lobbies: {banquet.stats.activeLobbies}
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-purple-900 font-serif font-bold" style={{ fontSize: 'var(--font-xs)' }}>
+            <Users size="1em" /> Players Online: {banquet.stats.playersOnline}
+          </span>
+        </div>
+      )}
+    </div>
   );
 }
 
