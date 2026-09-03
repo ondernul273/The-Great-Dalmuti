@@ -12,7 +12,7 @@ import {
   reseatForNextHand,
   submitTribute,
   applyRevolution,
-  TURN_TIMER_MS,
+  applyKick,
   MAX_PLAYERS,
   MIN_PLAYERS,
 } from './game/logic';
@@ -107,13 +107,26 @@ export default function App() {
   const [aiSeats, setAiSeats] = useState<{ id: string; name: string }[]>([]);
   const [lobbyRoster, setLobbyRoster] = useState<RosterEntry[]>([]);
   const [timerOn, setTimerOn] = useState(true);
+  const [timerSecs, setTimerSecs] = useState(60);
+  const [kickedInfo, setKickedInfo] = useState<{ kind: 'remove' | 'ai' } | null>(null);
   const aiCounterRef = useRef(0);
+  const seenChatRef = useRef<Set<string>>(new Set());
 
   const modeRef = useRef<GameMode>('none');
   modeRef.current = mode;
 
-  const pushChat = useCallback((msg: Omit<ChatMessage, 'id' | 'ts'>) => {
-    setChat((prev) => [...prev.slice(-140), { ...msg, id: nextChatId(), ts: Date.now() }]);
+  /** Exactly-once chat: transport relays can deliver a message twice, so dedupe by id. */
+  const pushChat = useCallback(
+    (msg: { name: string; text: string; system?: boolean; mine?: boolean; id?: string }) => {
+    const id = msg.id ?? nextChatId();
+    if (seenChatRef.current.has(id)) {
+      console.log('[CHAT] duplicate suppressed', id);
+      return;
+    }
+    if (seenChatRef.current.size > 600) seenChatRef.current.clear();
+    seenChatRef.current.add(id);
+    console.log('[CHAT] rendered', id, msg.name, ':', msg.text);
+    setChat((prev) => [...prev.slice(-140), { ...msg, id, ts: Date.now() }]);
   }, []);
 
   const pushLobbyChat = useCallback((line: Omit<LobbyChatLine, 'id' | 'ts'>) => {
@@ -208,12 +221,34 @@ export default function App() {
       }
 
       if (msg.type === 'chat') {
-        const p = msg.payload as { name: string; text: string };
+        const p = msg.payload as { name: string; text: string; system?: boolean; id?: string };
+        console.log('[CHAT] received', p.id ?? '(no id)', 'mode:', m, 'from:', msg.from);
         if (isHostMode(m)) {
-          pushChat(p);
-          netSendToAllExcept(msg.from, 'chat', p);
+          const withId = { ...p, id: p.id ?? nextChatId() };
+          pushChat(withId);
+          netSendToAllExcept(msg.from, 'chat', withId);
         } else if (isGuestMode(m)) {
           pushChat(p);
+        }
+        return;
+      }
+
+      if (msg.type === 'kicked') {
+        if (isGuestMode(m)) {
+          setKickedInfo((msg.payload as { kind: 'remove' | 'ai' }) ?? { kind: 'remove' });
+        }
+        return;
+      }
+
+      if (msg.type === 'return-lobby') {
+        if (isGuestMode(m)) {
+          console.log('[MP] host returned everyone to the lobby');
+          setState(null);
+          const next: GameMode = m === 'banquet-guest' ? 'banquet-lobby-guest' : 'online-guest';
+          modeRef.current = next;
+          setMode(next);
+          setDeclinedRevolution(-1);
+          setKickedInfo(null);
         }
         return;
       }
@@ -258,6 +293,7 @@ export default function App() {
     setLobbyChat([]);
     setAiSeats([]);
     setLobbyRoster([]);
+    setKickedInfo(null);
     peer.disconnect();
     sock.leaveLobby();
   }, [peer, sock]);
@@ -287,15 +323,16 @@ export default function App() {
           isOut: false,
         });
       }
-      const next = initializeNewGame(players, { timerEnabled: timerOn });
+      const next = initializeNewGame(players, { timerEnabled: timerOn, timerSeconds: timerSecs });
       setDeclinedRevolution(-1);
       setChat([]);
+      setKickedInfo(null);
       pushChat({ name: 'Herald', text: `A new game begins with ${players.length} players.`, system: true });
       setMode('local-ai');
       modeRef.current = 'local-ai';
       setState(next);
     },
-    [myName, pushChat, timerOn]
+    [myName, pushChat, timerOn, timerSecs]
   );
 
   const startHostedGame = useCallback(() => {
@@ -320,13 +357,17 @@ export default function App() {
       isHost: false,
       isOut: false,
     }));
-    const next = initializeNewGame([hostPlayer, ...guests, ...ais], { timerEnabled: timerOn });
+    const next = initializeNewGame([hostPlayer, ...guests, ...ais], {
+      timerEnabled: timerOn,
+      timerSeconds: timerSecs,
+    });
     setDeclinedRevolution(-1);
     setChat([]);
+    setKickedInfo(null);
     pushChat({ name: 'Herald', text: `A new game begins with ${next.players.length} players.`, system: true });
     setState(next);
     broadcastState(next);
-  }, [peer.myId, peer.connectedPeers, myName, peerNames, aiSeats, broadcastState, pushChat, timerOn]);
+  }, [peer.myId, peer.connectedPeers, myName, peerNames, aiSeats, broadcastState, pushChat, timerOn, timerSecs]);
 
   /* --------------------- banquet (socket) session --------------------- */
 
@@ -341,15 +382,16 @@ export default function App() {
       isOut: false,
     }));
     sock.startGame();
-    const next = initializeNewGame(players, { timerEnabled: timerOn });
+    const next = initializeNewGame(players, { timerEnabled: timerOn, timerSeconds: timerSecs });
     setDeclinedRevolution(-1);
     setChat([]);
+    setKickedInfo(null);
     pushChat({ name: 'Herald', text: `The banquet begins with ${players.length} players.`, system: true });
     modeRef.current = 'banquet-host';
     setMode('banquet-host');
     setState(next);
     broadcastState(next);
-  }, [sock, broadcastState, pushChat, timerOn]);
+  }, [sock, broadcastState, pushChat, timerOn, timerSecs]);
 
   // Follow the socket lobby in/out of the room screens.
   useEffect(() => {
@@ -510,7 +552,7 @@ export default function App() {
     const cur = state.players[state.currentPlayerIndex];
     if (!cur || cur.isOut) return;
     const started = state.turnStartedAt;
-    const delay = Math.max(0, started + TURN_TIMER_MS - Date.now());
+    const delay = Math.max(0, started + state.timerSeconds * 1000 - Date.now());
     const t = setTimeout(() => {
       hostReduce((prev) => {
         if (prev.phase !== 'playing' || prev.turnStartedAt !== started) return prev;
@@ -568,12 +610,65 @@ export default function App() {
   const handleSendChat = useCallback(
     (text: string) => {
       const name = myName.trim() || 'Player';
-      pushChat({ name, text, mine: true });
-      if (isHostMode(modeRef.current)) netBroadcast('chat', { name, text });
-      else if (isGuestMode(modeRef.current)) netSendToHost('chat', { name, text });
+      const id = nextChatId();
+      console.log('[CHAT] sent', id, name, ':', text);
+      pushChat({ name, text, mine: true, id });
+      if (isHostMode(modeRef.current)) netBroadcast('chat', { name, text, id });
+      else if (isGuestMode(modeRef.current)) netSendToHost('chat', { name, text, id });
     },
-    [mode, myName, pushChat, netBroadcast, netSendToHost]
+    [myName, pushChat, netBroadcast, netSendToHost]
   );
+
+  /* ---------------------- host moderation & lobby flow ---------------------- */
+
+  const handleKick = useCallback(
+    (playerId: string, kind: 'remove' | 'ai') => {
+      const victim = state?.players.find((p) => p.id === playerId);
+      if (!victim) return;
+      const aiName = AI_NAMES[Math.floor(Math.random() * AI_NAMES.length)];
+      hostReduce((prev) => applyKick(prev, playerId, kind, aiName));
+      // Tell the kicked client directly so it can show its own notice.
+      if (modeRef.current === 'online-host') peer.sendTo(playerId, { type: 'kicked', payload: { kind } });
+      else if (modeRef.current === 'banquet-host') sock.sendGame(playerId, 'kicked', { kind });
+      const text =
+        kind === 'ai'
+          ? `${victim.name} was replaced at the table by ${aiName}.`
+          : `${victim.name} was removed from the table by the host.`;
+      const id = nextChatId();
+      pushChat({ name: 'Herald', text, system: true, id });
+      netBroadcast('chat', { name: 'Herald', text, system: true, id });
+    },
+    [state, hostReduce, pushChat, netBroadcast, peer, sock]
+  );
+
+  const handleReturnToLobby = useCallback(() => {
+    setDeclinedRevolution(-1);
+    const m = modeRef.current;
+    if (m === 'banquet-host') {
+      sock.broadcastGame('return-lobby', {});
+      sock.reopenLobby();
+      setState(null);
+      modeRef.current = 'banquet-lobby-host';
+      setMode('banquet-lobby-host');
+    } else if (m === 'online-host') {
+      peer.broadcast({ type: 'return-lobby', payload: {} });
+      setState(null);
+      modeRef.current = 'online-host';
+      setMode('online-host');
+    }
+  }, [sock, peer]);
+
+  const handleLeaveTable = useCallback(() => {
+    setKickedInfo(null);
+    if (modeRef.current === 'banquet-guest') {
+      setState(null);
+      modeRef.current = 'banquet-lobby-guest';
+      setMode('banquet-lobby-guest');
+      setDeclinedRevolution(-1);
+    } else {
+      handleBackToLobby();
+    }
+  }, [handleBackToLobby]);
 
   /* ------------------------------- lobby --------------------------------- */
 
@@ -664,6 +759,8 @@ export default function App() {
         minSeats={MIN_PLAYERS}
         timerEnabled={timerOn}
         onToggleTimer={setTimerOn}
+        timerSeconds={timerSecs}
+        onTimerSeconds={setTimerSecs}
         error={lobbyError ?? peer.errorMessage}
         diagnostics={peer.diagnostics}
         networkTest={peer.networkTest}
@@ -711,9 +808,15 @@ export default function App() {
         revolutionDeclined={declinedRevolution === state.handNumber}
         chat={chat}
         turnDeadline={
-          state.phase === 'playing' && state.timerEnabled ? state.turnStartedAt + TURN_TIMER_MS : null
+          state.phase === 'playing' && state.timerEnabled
+            ? state.turnStartedAt + state.timerSeconds * 1000
+            : null
         }
         onContinueSeating={isHost ? handleContinueSeating : undefined}
+        onReturnToLobby={isHost ? handleReturnToLobby : undefined}
+        onKick={isHost ? handleKick : undefined}
+        onLeaveTable={handleLeaveTable}
+        kickedNotice={kickedInfo}
         onSendChat={handleSendChat}
         onPlay={handlePlay}
         onPass={handlePass}

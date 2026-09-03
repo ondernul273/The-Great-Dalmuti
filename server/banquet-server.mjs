@@ -186,6 +186,23 @@ io.on('connection', (socket) => {
     broadcastLobby(lobby);
   });
 
+  /* -------------------- reopen lobby between games -------------------- */
+  socket.on('lobby:reopen', () => {
+    const lobby = lobbyOf(socket);
+    if (!lobby || lobby.hostId !== socket.id) return;
+    lobby.inGame = false;
+    for (const p of lobby.players) {
+      if (!p.isAI) p.ready = p.isHost ? true : false;
+    }
+    console.log(`[banquet] lobby ${lobby.id} reopened for new guests`);
+    io.to(`lobby:${lobby.id}`).emit('lobby:chat', {
+      name: 'Herald',
+      text: 'The table is open again — new guests may join, ready up for the next game.',
+      system: true,
+    });
+    broadcastLobby(lobby);
+  });
+
   /* --------------------------- game relay ---------------------------- */
   socket.on('game:message', ({ to, type, payload } = {}) => {
     const lobby = lobbyOf(socket);

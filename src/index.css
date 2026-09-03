@@ -206,6 +206,63 @@ body {
   animation: fwFlash 0.55s ease-out infinite;
 }
 
+/* ---------- YOUR TURN banner ---------- */
+@keyframes turnPulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(245, 176, 65, 0.55), 0 6px 22px rgba(0,0,0,0.5); }
+  50%      { transform: scale(1.05); box-shadow: 0 0 26px 6px rgba(245, 176, 65, 0.35), 0 6px 22px rgba(0,0,0,0.5); }
+}
+.turn-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.25em 1em;
+  border-radius: 9999px;
+  background: #f5b041;
+  color: #2a0a4a;
+  border: 3px solid #fff3d6;
+  font-family: 'Cinzel', serif;
+  font-weight: 900;
+  font-style: italic;
+  letter-spacing: 0.06em;
+  font-size: var(--font-lg);
+  animation: turnPulse 1.15s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* ---------- Pass Queue ---------- */
+@keyframes passQueueGlow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(253, 224, 71, 0.25), 0 4px 16px rgba(0, 0, 0, 0.38);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(253, 224, 71, 0.38), 0 0 24px 6px rgba(245, 176, 65, 0.55), 0 4px 16px rgba(0, 0, 0, 0.38);
+  }
+}
+.pass-queue-glow {
+  animation: passQueueGlow 1.25s ease-in-out infinite;
+}
+
+@keyframes queueLabelPulse {
+  0%, 100% { opacity: 0.72; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(-1px); }
+}
+.pass-queue-label {
+  animation: queueLabelPulse 1.25s ease-in-out infinite;
+}
+
+/* ---------- hourglass warning glow (subtle, no flashing) ---------- */
+@keyframes hgGlow {
+  0%, 100% { filter: drop-shadow(0 0 2px rgba(252, 165, 165, 0.35)); }
+  50%      { filter: drop-shadow(0 0 10px rgba(252, 165, 165, 0.75)); }
+}
+.hg-warn { animation: hgGlow 1.6s ease-in-out infinite; }
+
+@keyframes hgStream {
+  0%, 100% { opacity: 0.95; }
+  50%      { opacity: 0.65; }
+}
+.hg-stream { animation: hgStream 0.5s linear infinite; }
+
 @keyframes dust {
   0%   { transform: translateY(0) scale(1); opacity: 0; }
   20%  { opacity: 0.7; }

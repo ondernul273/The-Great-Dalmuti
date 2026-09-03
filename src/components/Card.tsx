@@ -1,6 +1,14 @@
+import { useSyncExternalStore } from 'react';
 import type { Card as CardType } from '../game/types';
 import { CARD_INFO } from '../game/cards';
 import { cn } from '../utils/cn';
+import {
+  cardArtUrl,
+  cardArtVersion,
+  markArtBroken,
+  subscribeToCardArt,
+  type CardSlot,
+} from './cardAssets';
 import facesSheet from '../assets/cards/faces.jpg';
 import extrasSheet from '../assets/cards/extras.jpg';
 
@@ -22,6 +30,10 @@ interface Art {
   sizeX: string;
   sizeY: string;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Procedural fallback art (sprite sheets) — used when no PNG exists  */
+/* ------------------------------------------------------------------ */
 
 export const CARD_BACK_ART: Art = {
   image: extrasSheet,
@@ -60,25 +72,66 @@ const SIZE_VARS = {
   md: { w: 'var(--card-w)', h: 'var(--card-h)', corner: 'var(--font-xs)', title: 'var(--font-tiny)', plate: 'var(--font-tiny)' },
 } as const;
 
-export function CardBackFace({ size = 'md', className }: { size?: 'xs' | 'sm' | 'md' | 'lg'; className?: string }) {
+/**
+ * Subscribes to the artwork registry so cards re-render when a runtime pack
+ * arrives or a PNG turns out to be broken.
+ */
+function useCardArt(slot: CardSlot): string | null {
+  useSyncExternalStore(subscribeToCardArt, cardArtVersion, cardArtVersion);
+  return cardArtUrl(slot);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Card back                                                          */
+/* ------------------------------------------------------------------ */
+
+export function CardBackFace({
+  size = 'md',
+  className,
+}: {
+  size?: 'xs' | 'sm' | 'md' | 'lg';
+  className?: string;
+}) {
   const s = SIZE_VARS[size];
+  const png = useCardArt('back');
+
   return (
     <div
       className={cn('rounded-md border border-stone-400/70 shadow-md overflow-hidden shrink-0', className)}
       style={{
         width: s.w,
         height: s.h,
-        backgroundImage: `url(${CARD_BACK_ART.image})`,
-        backgroundSize: `${CARD_BACK_ART.sizeX} ${CARD_BACK_ART.sizeY}`,
-        backgroundPosition: `${CARD_BACK_ART.posX} ${CARD_BACK_ART.posY}`,
-        backgroundRepeat: 'no-repeat',
+        ...(png
+          ? {}
+          : {
+              backgroundImage: `url(${CARD_BACK_ART.image})`,
+              backgroundSize: `${CARD_BACK_ART.sizeX} ${CARD_BACK_ART.sizeY}`,
+              backgroundPosition: `${CARD_BACK_ART.posX} ${CARD_BACK_ART.posY}`,
+              backgroundRepeat: 'no-repeat',
+            }),
       }}
-    />
+    >
+      {png && (
+        <img
+          src={png}
+          alt=""
+          draggable={false}
+          onError={() => markArtBroken(png)}
+          className="w-full h-full object-cover select-none pointer-events-none"
+        />
+      )}
+    </div>
   );
 }
 
+/* ------------------------------------------------------------------ */
+/*  Card face                                                          */
+/* ------------------------------------------------------------------ */
+
 export function Card({ card, faceDown, selected, dimmed, size = 'md', onClick, className, style }: CardProps) {
   const s = SIZE_VARS[size];
+  // Hooks must run unconditionally, so resolve art before any early return.
+  const png = useCardArt(card ? card.rank : 'back');
 
   if (faceDown || !card) {
     return <CardBackFace size={size} className={className} />;
@@ -86,7 +139,6 @@ export function Card({ card, faceDown, selected, dimmed, size = 'md', onClick, c
 
   const info = CARD_INFO[card.rank];
   const isJester = card.rank === 13;
-  const art = artFor(card.rank);
   const label = isJester ? 'Jester' : info.name;
   const cornerLabel = isJester ? 'J' : String(card.rank);
 
@@ -107,28 +159,76 @@ export function Card({ card, faceDown, selected, dimmed, size = 'md', onClick, c
       style={{
         width: s.w,
         height: s.h,
-        background: 'linear-gradient(160deg,#f7eed8 0%,#f1e5c6 55%,#e7d7ae 100%)',
-        padding: '4px',
-        display: 'flex',
-        flexDirection: 'column',
+        ...(png
+          ? { padding: 0, background: '#1c1206' }
+          : {
+              background: 'linear-gradient(160deg,#f7eed8 0%,#f1e5c6 55%,#e7d7ae 100%)',
+              padding: '4px',
+              display: 'flex',
+              flexDirection: 'column',
+            }),
         ...style,
       }}
     >
+      {png ? (
+        <img
+          src={png}
+          alt={label}
+          draggable={false}
+          onError={() => markArtBroken(png)}
+          className="absolute inset-0 w-full h-full object-cover select-none pointer-events-none"
+        />
+      ) : (
+        <ProceduralCardFace
+          rank={card.rank}
+          label={label}
+          cornerLabel={cornerLabel}
+          corner={s.corner}
+          title={s.title}
+          plate={s.plate}
+        />
+      )}
+    </button>
+  );
+}
+
+/**
+ * The original code-drawn card face. Kept as the guaranteed fallback so the
+ * game stays fully playable with zero PNGs installed.
+ */
+function ProceduralCardFace({
+  rank,
+  label,
+  cornerLabel,
+  corner,
+  title,
+  plate,
+}: {
+  rank: number;
+  label: string;
+  cornerLabel: string;
+  corner: string;
+  title: string;
+  plate: string;
+}) {
+  const art = artFor(rank);
+  return (
+    <>
       {/* fine inner frame, like the printed card stock */}
       <div className="pointer-events-none absolute inset-[2px] rounded-[4px] border border-[#a5885a]/70" />
 
       {/* Top row: rank • italic title • rank */}
       <div className="flex items-center gap-[2px] leading-none shrink-0 px-[1px]">
-        <span className="font-black shrink-0" style={{ fontSize: s.corner, color: '#40290f' }}>
+        <span className="font-black shrink-0" style={{ fontSize: corner, color: '#40290f' }}>
           {cornerLabel}
         </span>
         <span
           className="flex-1 text-center font-serif italic font-bold truncate"
-          style={{ fontSize: s.title, color: '#7b2d26' }}
+          style={{ fontSize: title, color: '#7b2d26' }}
         >
           {label}
         </span>
-        <span className="font-black shrink-0" style={{ fontSize: s.corner, color: '#40290f' }}>
+        <span className="font-black shrink-0" style={{ fontSize: corner, color: '#40290f' }}>
           {cornerLabel}
         </span>
       </div>
@@ -148,13 +248,13 @@ export function Card({ card, faceDown, selected, dimmed, size = 'md', onClick, c
 
       {/* Bottom row: rank • small-caps name plate • rank */}
       <div className="flex items-center gap-[2px] leading-none shrink-0 px-[1px]">
-        <span className="font-black shrink-0" style={{ fontSize: s.corner, color: '#40290f' }}>
+        <span className="font-black shrink-0" style={{ fontSize: corner, color: '#40290f' }}>
           {cornerLabel}
         </span>
         <span
           className="flex-1 text-center font-serif font-bold truncate"
           style={{
-            fontSize: s.plate,
+            fontSize: plate,
             color: '#4a3418',
             letterSpacing: '0.09em',
             background: 'rgba(120,90,40,0.12)',
@@ -165,10 +265,10 @@ export function Card({ card, faceDown, selected, dimmed, size = 'md', onClick, c
         >
           {label.toUpperCase()}
         </span>
-        <span className="font-black shrink-0" style={{ fontSize: s.corner, color: '#40290f' }}>
+        <span className="font-black shrink-0" style={{ fontSize: corner, color: '#40290f' }}>
           {cornerLabel}
         </span>
       </div>
-    </button>
+    </>
   );
 }

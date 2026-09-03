@@ -21,6 +21,10 @@ export interface Player {
   role?: Role;
   finishOrder?: number; // 1 = first out (next Greater Dalmuti), highest = Greater Peon
   isOut: boolean;
+  /** removed from the table by the host (spectating this hand) */
+  kicked?: boolean;
+  /** seat disappears at the next reseat */
+  dropped?: boolean;
 }
 
 export type Phase =
@@ -88,8 +92,14 @@ export interface RosterEntry {
 export interface GameState {
   /** epoch ms of when the current turn began — drives the 60s turn clock */
   turnStartedAt: number;
-  /** whether the 60s turn hourglass (and auto-pass) is active this game */
+  /** whether the turn hourglass (and auto-pass on timeout) is active this game */
   timerEnabled: boolean;
+  /** chosen turn length in seconds (15…120), part of the lobby settings */
+  timerSeconds: number;
+  /** consecutive-per-hand timeout count per player id (AFK tracking) */
+  afkCounts: Record<string, number>;
+  /** players who have passed during the current trick */
+  passedIds: string[];
   /** the opening draw for seats, in seat order (Greater Dalmuti first); null after hand 1 */
   seatingDraw: SeatDraw[] | null;
   phase: Phase;

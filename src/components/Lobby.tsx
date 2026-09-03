@@ -38,6 +38,8 @@ interface LobbyProps {
   onStartAI: (numAI: number) => void;
   timerEnabled: boolean;
   onToggleTimer: (v: boolean) => void;
+  timerSeconds: number;
+  onTimerSeconds: (s: number) => void;
   maxSeats: number;
   minSeats: number;
   error?: string | null;
@@ -102,6 +104,8 @@ export function Lobby(props: LobbyProps) {
     onStartAI,
     timerEnabled,
     onToggleTimer,
+    timerSeconds,
+    onTimerSeconds,
     maxSeats,
     minSeats,
     error,
@@ -295,18 +299,12 @@ export function Lobby(props: LobbyProps) {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <ModeCard
-                    icon={<Link2 size="1.4em" />}
-                    title="Direct Connect"
-                    tagline="Peer-to-peer via room code"
-                    chips={['Host game', 'Join with code', 'No server needed']}
-                    onClick={() => setScreen('dchoose')}
-                  />
-                  <ModeCard
                     icon={<Server size="1.4em" />}
                     title="Banquet Browser"
-                    tagline="Public lobbies on a relay server"
+                    tagline="Most reliable multiplayer experience."
                     chips={['Create lobby', 'Browse & join', 'Passwords · ready · chat']}
                     onClick={() => setScreen('bchoose')}
+                    recommended
                     statusDot={
                       banquet.serverStatus === 'online'
                         ? 'bg-emerald-500'
@@ -314,6 +312,13 @@ export function Lobby(props: LobbyProps) {
                         ? 'bg-red-500'
                         : 'bg-stone-400'
                     }
+                  />
+                  <ModeCard
+                    icon={<Link2 size="1.4em" />}
+                    title="Direct Connect"
+                    tagline="Advanced peer-to-peer connection."
+                    chips={['Host game', 'Join with code', 'No server needed']}
+                    onClick={() => setScreen('dchoose')}
                   />
                 </div>
 
@@ -356,7 +361,7 @@ export function Lobby(props: LobbyProps) {
                     {numAI + 1 === maxSeats ? ' — a full table, 10 cards each' : ''}
                   </p>
                 </div>
-                <TimerToggle enabled={timerEnabled} onChange={onToggleTimer} />
+                <TimerToggle enabled={timerEnabled} onChange={onToggleTimer} seconds={timerSeconds} onSeconds={onTimerSeconds} />
                 <div className="flex gap-2">
                   <BackBtn onClick={() => setScreen('menu')} />
                   <MenuBtn onClick={() => myName.trim() && onStartAI(numAI)} disabled={!myName.trim()} tone="purple">
@@ -402,7 +407,7 @@ export function Lobby(props: LobbyProps) {
                       </p>
                       <p className="text-amber-200/70 italic mt-1" style={{ fontSize: 'var(--font-xs)' }}>Share this code with friends</p>
                     </div>
-                    <TimerToggle enabled={timerEnabled} onChange={onToggleTimer} />
+                    <TimerToggle enabled={timerEnabled} onChange={onToggleTimer} seconds={timerSeconds} onSeconds={onTimerSeconds} />
                     <div>
                       <p className="text-amber-900 font-serif font-bold mb-2 flex items-center justify-between" style={{ fontSize: 'var(--font-sm)' }}>
                         <span>At the table ({seatCount}/{maxSeats})</span>
@@ -563,7 +568,7 @@ export function Lobby(props: LobbyProps) {
                     ))}
                   </div>
                 </Field>
-                <TimerToggle enabled={timerEnabled} onChange={onToggleTimer} />
+                <TimerToggle enabled={timerEnabled} onChange={onToggleTimer} seconds={timerSeconds} onSeconds={onTimerSeconds} />
                 <div className="flex gap-2">
                   <BackBtn onClick={() => setScreen('bchoose')} />
                   <MenuBtn
@@ -758,7 +763,9 @@ export function Lobby(props: LobbyProps) {
                     <LogOut size="1em" /> Leave
                   </button>
                 </div>
-                {banquetIsHost && <TimerToggle enabled={timerEnabled} onChange={onToggleTimer} />}
+                {banquetIsHost && (
+                  <TimerToggle enabled={timerEnabled} onChange={onToggleTimer} seconds={timerSeconds} onSeconds={onTimerSeconds} />
+                )}
 
                 {/* lobby chat */}
                 <div className="rounded-lg border border-amber-400/60 bg-black/10 overflow-hidden">
@@ -869,6 +876,7 @@ function ModeCard({
   chips,
   onClick,
   statusDot,
+  recommended,
 }: {
   icon: React.ReactNode;
   title: string;
@@ -876,12 +884,26 @@ function ModeCard({
   chips: string[];
   onClick: () => void;
   statusDot?: string;
+  recommended?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
-      className="group text-left p-4 rounded-xl border-2 border-amber-600/40 bg-white/50 hover:bg-white/80 hover:border-amber-500 hover:-translate-y-0.5 hover:shadow-lg transition-all"
+      className={cn(
+        'group relative text-left p-4 rounded-xl border-2 bg-white/50 hover:bg-white/80 hover:-translate-y-0.5 hover:shadow-lg transition-all',
+        recommended
+          ? 'border-amber-500 shadow-[0_0_0_3px_rgba(212,175,55,0.35),0_10px_30px_rgba(0,0,0,0.25)] hover:border-amber-400'
+          : 'border-amber-600/40 hover:border-amber-500'
+      )}
     >
+      {recommended && (
+        <span
+          className="absolute -top-3 left-3 px-2.5 py-0.5 rounded-full font-heading font-black tracking-widest text-purple-950 border-2 border-amber-200 shadow-md"
+          style={{ fontSize: 'var(--font-tiny)', background: 'linear-gradient(180deg,#ffe9a8,#d4af37)' }}
+        >
+          ★ RECOMMENDED
+        </span>
+      )}
       <div className="flex items-center gap-2 mb-1">
         <span className="text-purple-800 group-hover:scale-110 transition-transform">{icon}</span>
         <span className="font-heading font-black text-purple-900 relative" style={{ fontSize: 'var(--font-base)' }}>
@@ -903,45 +925,78 @@ function ModeCard({
   );
 }
 
-function TimerToggle({ enabled, onChange }: { enabled: boolean; onChange: (v: boolean) => void }) {
+const TIMER_CHOICES = [15, 30, 45, 60, 90, 120];
+
+function TimerToggle({
+  enabled,
+  onChange,
+  seconds,
+  onSeconds,
+}: {
+  enabled: boolean;
+  onChange: (v: boolean) => void;
+  seconds: number;
+  onSeconds: (s: number) => void;
+}) {
   return (
-    <div className="flex items-center justify-between gap-3 p-3 rounded-lg bg-white/55 border border-amber-300">
-      <div className="min-w-0">
-        <p className="font-serif font-bold text-amber-900 flex items-center gap-1.5" style={{ fontSize: 'var(--font-sm)' }}>
-          <Hourglass size="1em" /> Turn timer
+    <div className="p-3 rounded-lg bg-white/55 border border-amber-300 space-y-2">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-serif font-bold text-amber-900 flex items-center gap-1.5" style={{ fontSize: 'var(--font-sm)' }}>
+            <Hourglass size="1em" /> Turn timer
+            <span
+              className={cn(
+                'ml-1 px-2 py-0.5 rounded-full border font-heading',
+                enabled ? 'bg-emerald-100 text-emerald-800 border-emerald-400' : 'bg-stone-200 text-stone-700 border-stone-400'
+              )}
+              style={{ fontSize: 'var(--font-tiny)' }}
+            >
+              {enabled ? `${seconds} s` : 'OFF'}
+            </span>
+          </p>
+          <p className="font-serif italic text-amber-800/80 leading-snug" style={{ fontSize: 'var(--font-xs)' }}>
+            {enabled
+              ? 'An hourglass counts down each turn — when the sand runs out, that player passes automatically.'
+              : 'No time limit — every player may ponder as long as they like.'}
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={enabled}
+          onClick={() => onChange(!enabled)}
+          className={cn(
+            'relative shrink-0 rounded-full border-2 transition-colors',
+            enabled ? 'bg-emerald-600 border-emerald-300' : 'bg-stone-400 border-stone-300'
+          )}
+          style={{ width: '3.6em', height: '2em', fontSize: 'var(--font-sm)' }}
+          title={enabled ? 'Turn the timer off' : 'Turn the timer on'}
+        >
           <span
-            className={cn(
-              'ml-1 px-2 py-0.5 rounded-full border font-heading',
-              enabled ? 'bg-emerald-100 text-emerald-800 border-emerald-400' : 'bg-stone-200 text-stone-700 border-stone-400'
-            )}
-            style={{ fontSize: 'var(--font-tiny)' }}
-          >
-            {enabled ? '60 s' : 'OFF'}
-          </span>
-        </p>
-        <p className="font-serif italic text-amber-800/80 leading-snug" style={{ fontSize: 'var(--font-xs)' }}>
-          {enabled
-            ? 'An hourglass counts down each turn — when it empties, that player passes automatically.'
-            : 'No time limit — every player may ponder as long as they like.'}
-        </p>
+            className="absolute top-1/2 -translate-y-1/2 rounded-full bg-white shadow transition-all"
+            style={{ width: '1.45em', height: '1.45em', left: enabled ? 'calc(100% - 1.65em)' : '0.2em' }}
+          />
+        </button>
       </div>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={enabled}
-        onClick={() => onChange(!enabled)}
-        className={cn(
-          'relative shrink-0 rounded-full border-2 transition-colors',
-          enabled ? 'bg-emerald-600 border-emerald-300' : 'bg-stone-400 border-stone-300'
-        )}
-        style={{ width: '3.6em', height: '2em', fontSize: 'var(--font-sm)' }}
-        title={enabled ? 'Turn the timer off' : 'Turn the timer on'}
-      >
-        <span
-          className="absolute top-1/2 -translate-y-1/2 rounded-full bg-white shadow transition-all"
-          style={{ width: '1.45em', height: '1.45em', left: enabled ? 'calc(100% - 1.65em)' : '0.2em' }}
-        />
-      </button>
+      {enabled && (
+        <div className="flex gap-1.5 flex-wrap">
+          {TIMER_CHOICES.map((s) => (
+            <button
+              key={s}
+              onClick={() => onSeconds(s)}
+              className={cn(
+                'px-2.5 py-1 rounded-lg font-serif font-bold border-2 transition-all',
+                seconds === s
+                  ? 'bg-purple-700 text-white border-amber-400 scale-105'
+                  : 'bg-white/60 text-amber-900 border-amber-300 hover:border-amber-500'
+              )}
+              style={{ fontSize: 'var(--font-xs)' }}
+            >
+              {s}s
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

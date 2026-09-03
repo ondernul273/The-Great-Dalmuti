@@ -1,0 +1,20 @@
+{
+  "_comment": "Rename this file to manifest.json to activate a runtime card pack. Put the PNGs in this same folder (public/cards/). Runtime art overrides bundled art and needs no rebuild. See src/assets/cards/README.md.",
+  "theme": "example-runtime-pack",
+  "files": [
+    "1-dalmuti.png",
+    "2-archbishop.png",
+    "3-earl-marshal.png",
+    "4-baroness.png",
+    "5-abbess.png",
+    "6-knight.png",
+    "7-seamstress.png",
+    "8-mason.png",
+    "9-cook.png",
+    "10-shepherdess.png",
+    "11-stonecutter.png",
+    "12-peasant.png",
+    "13-jester.png",
+    "back.png"
+  ]
+}

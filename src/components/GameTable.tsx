@@ -1,16 +1,56 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import type { CSSProperties } from 'react';
 import type { Card as CardType, ChatMessage, GameState, Player, Role } from '../game/types';
-import { CARD_INFO, countJesters } from '../game/cards';
-import { canPlayCards, getRoleName, describeSet, rolesForSeating, TURN_TIMER_MS } from '../game/logic';
+import { countJesters } from '../game/cards';
+import {
+  canPlayCards,
+  getRoleName,
+  describeSet,
+  rolesForSeating,
+} from '../game/logic';
 import { Card, CardBackFace } from './Card';
 import { ScorePanel } from './ScorePanel';
 import { ChatPanel } from './ChatPanel';
 import { RoleBadge } from './RoleBadge';
 import { Fireworks } from './Celebrate';
 import { cn } from '../utils/cn';
-import { Trophy, MessageCircle, LogOut, Crown, Coins, Hourglass } from 'lucide-react';
-import greatHall from '../assets/great-hall.jpg';
+import {
+  Trophy,
+  MessageCircle,
+  LogOut,
+  Crown,
+  Coins,
+  Hourglass,
+  Swords,
+  Ban,
+  UserX,
+  AlarmClock,
+  UserMinus,
+  Bot,
+  DoorOpen,
+} from 'lucide-react';
+
+interface GameTableProps {
+  state: GameState;
+  myPlayerId: string;
+  isHost: boolean;
+  revolutionDeclined: boolean;
+  chat: ChatMessage[];
+  turnDeadline?: number | null;
+  onContinueSeating?: () => void;
+  onReturnToLobby?: () => void;
+  onKick?: (playerId: string, kind: 'remove' | 'ai') => void;
+  onLeaveTable?: () => void;
+  kickedNotice?: { kind: 'remove' | 'ai' } | null;
+  onSendChat: (text: string) => void;
+  onPlay: (cards: CardType[]) => void;
+  onPass: () => void;
+  onTribute: (cards: CardType[]) => void;
+  onRevolution: (greaterRevolution: boolean) => void;
+  onDeclineRevolution: () => void;
+  onNextHand: () => void;
+  onBackToLobby?: () => void;
+}
 
 /** Polar seat around the oval table. angle 0 = top, clockwise. Human sits at 180° (bottom). */
 function tableSeat(kFromHuman: number, total: number): { x: number; y: number; angle: number } {
@@ -25,26 +65,6 @@ function tableSeat(kFromHuman: number, total: number): { x: number; y: number; a
   };
 }
 
-interface GameTableProps {
-  state: GameState;
-  myPlayerId: string;
-  isHost: boolean;
-  revolutionDeclined: boolean;
-  chat: ChatMessage[];
-  /** epoch ms when the current turn's 60s hourglass empties (null when not playing / timer off) */
-  turnDeadline?: number | null;
-  /** host-only: skip the opening seat-draw reveal and start dealing now */
-  onContinueSeating?: () => void;
-  onSendChat: (text: string) => void;
-  onPlay: (cards: CardType[]) => void;
-  onPass: () => void;
-  onTribute: (cards: CardType[]) => void;
-  onRevolution: (greaterRevolution: boolean) => void;
-  onDeclineRevolution: () => void;
-  onNextHand: () => void;
-  onBackToLobby?: () => void;
-}
-
 const DEAL_TICK_MS = 45;
 
 export function GameTable(props: GameTableProps) {
@@ -56,6 +76,10 @@ export function GameTable(props: GameTableProps) {
     chat,
     turnDeadline,
     onContinueSeating,
+    onReturnToLobby,
+    onKick,
+    onLeaveTable,
+    kickedNotice,
     onSendChat,
     onPlay,
     onPass,
@@ -79,9 +103,16 @@ export function GameTable(props: GameTableProps) {
   const [receiveIds, setReceiveIds] = useState<string[]>([]);
   const [celebrate, setCelebrate] = useState<'big' | 'small' | null>(null);
   const [reveal, setReveal] = useState<CardType[] | null>(null);
+  // A one-shot intention for this trick. It is intentionally local to the
+  // player: the host only receives the normal, authoritative Pass action
+  // once this player actually becomes the current player.
+  const [passQueued, setPassQueued] = useState(false);
+  const [kickTarget, setKickTarget] = useState<string | null>(null);
 
   const prevPhaseRef = useRef(state.phase);
   const prevHandIdsRef = useRef<Set<string>>(new Set(myPlayer?.hand.map((c) => c.id) ?? []));
+  const prevLastPlayRef = useRef(state.lastValidPlay);
+  const passQueueExecutionRef = useRef('');
 
   /* -------- dealing animation clock -------- */
   const totalCards = useMemo(
@@ -145,6 +176,24 @@ export function GameTable(props: GameTableProps) {
     return;
   }, [state.phase, myPlayer?.hand]);
 
+  /* -------- Pass Queue resets on every trick boundary and phase change -------- */
+  useEffect(() => {
+    const was = prevLastPlayRef.current;
+    prevLastPlayRef.current = state.lastValidPlay;
+    // null -> card means a new trick has started; card -> null means one has
+    // finished. A queue may never cross either boundary.
+    if (was !== state.lastValidPlay && (was === null || state.lastValidPlay === null)) {
+      setPassQueued(false);
+      passQueueExecutionRef.current = '';
+    }
+  }, [state.lastValidPlay]);
+  useEffect(() => {
+    if (state.phase !== 'playing') {
+      setPassQueued(false);
+      passQueueExecutionRef.current = '';
+    }
+  }, [state.phase]);
+
   /* -------- celebration when I finish 1st or 2nd -------- */
   const myPlace = myPlayer?.finishOrder;
   useEffect(() => {
@@ -154,7 +203,7 @@ export function GameTable(props: GameTableProps) {
     return () => clearTimeout(t);
   }, [myPlace]);
 
-  /* -------- sealed tribute: reveal my received cards only after I submit -------- */
+  /* -------- sealed tribute reveal -------- */
   const taxNow = state.pendingTaxes;
   const iSubmittedNow =
     !!taxNow &&
@@ -178,9 +227,6 @@ export function GameTable(props: GameTableProps) {
   }, [iSubmittedNow]);
 
   /* -------- unread chat badge -------- */
-  useEffect(() => {
-    if (!showChat) setUnread((u) => u + 0);
-  }, [showChat]);
   const lastChatIdRef = useRef<string | null>(null);
   useEffect(() => {
     const last = chat[chat.length - 1];
@@ -226,9 +272,51 @@ export function GameTable(props: GameTableProps) {
   const isMyTurn =
     state.phase === 'playing' &&
     state.players[state.currentPlayerIndex]?.id === myPlayerId &&
-    !myPlayer?.isOut;
+    !myPlayer?.isOut &&
+    !myPlayer?.kicked;
 
   const cardsInteractive = (isMyTurn && state.phase === 'playing') || !!myTributeDue;
+
+  /* -------- Pass Queue executes only after authoritative state gives me the turn -------- */
+  useEffect(() => {
+    if (!isMyTurn || !passQueued || !myPlayer) return;
+    const key = `${state.handNumber}:${state.currentPlayerIndex}:${state.turnStartedAt}`;
+    if (passQueueExecutionRef.current === key) return;
+    passQueueExecutionRef.current = key;
+    // A small delay leaves the queued state visible as the turn reaches us.
+    const t = setTimeout(() => {
+      setPassQueued(false);
+      onPass();
+    }, 250);
+    return () => clearTimeout(t);
+  }, [isMyTurn, passQueued, myPlayer, state.handNumber, state.currentPlayerIndex, state.turnStartedAt, onPass]);
+
+  const canUsePassQueue =
+    state.phase === 'playing' && !myPlayer?.isOut && !myPlayer?.kicked;
+
+  const handlePassButton = () => {
+    if (!canUsePassQueue) return;
+    if (passQueued) {
+      // Clicking the highlighted button is always a cancellation, including
+      // the short beat after the turn arrives.
+      setPassQueued(false);
+      passQueueExecutionRef.current = '';
+      return;
+    }
+    if (isMyTurn) {
+      // Normal immediate pass remains unchanged for the current player.
+      onPass();
+      return;
+    }
+    setPassQueued(true);
+  };
+
+  const handlePlayButton = () => {
+    // A real play always supersedes an earlier pass intention.
+    setPassQueued(false);
+    passQueueExecutionRef.current = '';
+    onPlay(selectedCards);
+  };
 
   const toggleCard = (card: CardType) => {
     setSelected((prev) => {
@@ -249,6 +337,16 @@ export function GameTable(props: GameTableProps) {
     });
   };
 
+  /* -------- kicked out of the table -------- */
+  if ((myPlayer?.kicked && myPlayer?.dropped) || (!myPlayer && kickedNotice)) {
+    return (
+      <KickedScreen
+        kind={myPlayer?.dropped ? 'remove' : kickedNotice?.kind ?? 'remove'}
+        onLeave={onLeaveTable ?? onBackToLobby}
+      />
+    );
+  }
+
   if (!myPlayer) {
     return (
       <div className="h-screen flex items-center justify-center text-amber-200 font-serif" style={{ fontSize: 'var(--font-xl)' }}>
@@ -264,6 +362,7 @@ export function GameTable(props: GameTableProps) {
         myPlayerId={myPlayerId}
         isHost={isHost}
         onNextHand={onNextHand}
+        onReturnToLobby={onReturnToLobby}
         onBackToLobby={onBackToLobby}
       />
     );
@@ -286,7 +385,6 @@ export function GameTable(props: GameTableProps) {
     ? handSorted.slice(0, dealtFor(myIdx, dealTick))
     : handSorted;
 
-  // cards I am about to receive (shown face-up in the centre during taxes)
   const receivingCards: CardType[] = myTributeDue
     ? iAmGD
       ? tax?.greaterPeonCardsGiven ?? []
@@ -301,14 +399,7 @@ export function GameTable(props: GameTableProps) {
   const iAmLP = myPlayer.role === 'lesser-peon';
 
   return (
-    <div
-      className="fixed inset-0 flex flex-col overflow-hidden"
-    >
-      <div
-        className="pointer-events-none absolute inset-0 bg-cover bg-center"
-        style={{ backgroundImage: `url(${greatHall})`, filter: 'brightness(0.72) saturate(1.1)' }}
-      />
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/45 via-transparent to-black/70" />
+    <div className="fixed inset-0 flex flex-col overflow-hidden">
       <div className="great-table z-[1]" />
 
       {showScore && (
@@ -322,8 +413,19 @@ export function GameTable(props: GameTableProps) {
         onClose={() => setShowChat(false)}
       />
 
+      {kickTarget && onKick && (
+        <KickDialog
+          name={state.players.find((p) => p.id === kickTarget)?.name ?? 'this player'}
+          onCancel={() => setKickTarget(null)}
+          onChoose={(kind) => {
+            onKick(kickTarget, kind);
+            setKickTarget(null);
+          }}
+        />
+      )}
+
       {/* ---------------- header ---------------- */}
-      <header className="shrink-0 relative z-30 bg-black/45 backdrop-blur border-b border-amber-400/25 px-3 py-2 flex items-center justify-between gap-2">
+      <header className="shrink-0 relative z-30 bg-black/45 backdrop-blur border-b border-amber-400/25 px-3 py-1.5 flex items-center justify-between gap-2">
         <div className="min-w-0">
           <h1 className="font-heading italic font-bold text-amber-300 leading-none truncate" style={{ fontSize: 'var(--font-lg)' }}>
             The Great Dalmuti
@@ -332,7 +434,7 @@ export function GameTable(props: GameTableProps) {
             Hand {state.handNumber}
             <span className="text-amber-100/30">·</span>
             <span className={cn('inline-flex items-center gap-1', state.timerEnabled ? 'text-amber-200/80' : 'text-amber-100/45')}>
-              <Hourglass size="1em" /> {state.timerEnabled ? '60 s turns' : 'no timer'}
+              <Hourglass size="1em" /> {state.timerEnabled ? `${state.timerSeconds} s turns` : 'no timer'}
             </span>
           </p>
         </div>
@@ -385,7 +487,6 @@ export function GameTable(props: GameTableProps) {
 
       {/* ---------------- table ---------------- */}
       <main className="flex-1 relative min-h-0 z-10">
-        {/* tribute reveal banner — appears for a few seconds after I submit */}
         {reveal && (
           <div className="absolute left-1/2 top-[4%] -translate-x-1/2 z-40 pointer-events-none fade-in">
             <div className="flex flex-col items-center gap-1.5 px-5 py-2.5 rounded-xl bg-black/70 border-2 border-amber-400/70 shadow-2xl backdrop-blur-sm">
@@ -403,7 +504,6 @@ export function GameTable(props: GameTableProps) {
           </div>
         )}
 
-        {/* finishing celebration */}
         {celebrate && (
           <>
             <Fireworks big={celebrate === 'big'} />
@@ -424,11 +524,13 @@ export function GameTable(props: GameTableProps) {
           dealing={dealing}
           myIdx={myIdx}
           totalPlayers={n}
+          canKick={!!onKick}
+          onKick={(id) => setKickTarget(id)}
           dealtFor={
             seating
               ? () => 0
               : dealing
-              ? (oppSeatIdxInPlayers: number) => dealtFor(oppSeatIdxInPlayers, dealTick)
+              ? (seatIdxInPlayers: number) => dealtFor(seatIdxInPlayers, dealTick)
               : null
           }
         />
@@ -456,57 +558,7 @@ export function GameTable(props: GameTableProps) {
         {/* centre of the table */}
         <div className="absolute inset-0 flex items-center justify-center px-2 pointer-events-none">
           <div className="flex flex-col items-center gap-2 pointer-events-auto">
-            {/* action buttons above the pile */}
-            {!dealing && (state.phase === 'playing' || inTaxes) && !myPlayer.isOut && (
-              <div className="flex gap-2 mb-1">
-                {inTaxes && myTributeDue ? (
-                  <button
-                    onClick={() => onTribute(selectedCards)}
-                    disabled={selectedCards.length !== tributeCount}
-                    className={cn(
-                      'flex items-center gap-2 px-5 py-2 rounded-xl font-serif font-bold shadow-lg border-2 transition-all',
-                      selectedCards.length === tributeCount
-                        ? 'bg-amber-500 hover:bg-amber-400 text-purple-950 border-amber-300 hover:-translate-y-0.5'
-                        : 'bg-stone-700/50 text-stone-400 border-stone-600/50 cursor-not-allowed'
-                    )}
-                    style={{ fontSize: 'var(--font-base)' }}
-                  >
-                    <Coins size="1em" /> Give Tribute ({selectedCards.length}/{tributeCount})
-                  </button>
-                ) : state.phase === 'playing' ? (
-                  <>
-                    <button
-                      onClick={onPass}
-                      disabled={!isMyTurn}
-                      className={cn(
-                        'px-5 py-2 rounded-xl font-serif font-bold shadow-lg border-2 transition-all',
-                        isMyTurn
-                          ? 'bg-red-800 hover:bg-red-700 text-amber-50 border-red-500 hover:-translate-y-0.5'
-                          : 'bg-stone-700/40 text-stone-400 border-stone-600/40 cursor-not-allowed'
-                      )}
-                      style={{ fontSize: 'var(--font-base)' }}
-                    >
-                      Pass
-                    </button>
-                    <button
-                      onClick={() => onPlay(selectedCards)}
-                      disabled={!isMyTurn || !playValid}
-                      className={cn(
-                        'px-5 py-2 rounded-xl font-serif font-bold shadow-lg border-2 transition-all',
-                        isMyTurn && playValid
-                          ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-300 hover:-translate-y-0.5'
-                          : 'bg-stone-700/40 text-stone-400 border-stone-600/40 cursor-not-allowed'
-                      )}
-                      style={{ fontSize: 'var(--font-base)' }}
-                    >
-                      {selectedCards.length > 0 ? `Play ${describeSet(selectedCards)}` : 'Play'}
-                    </button>
-                  </>
-                ) : null}
-              </div>
-            )}
-
-            {/* the opening draw for seats — first hand only */}
+            {/* the opening draw for seats */}
             {seating && state.seatingDraw && (
               <div
                 className="rounded-2xl px-5 py-4 bg-black/60 border-2 border-amber-400/70 shadow-2xl flex flex-col items-center gap-3 fade-in max-w-[94vw] max-h-[72vh] overflow-y-auto"
@@ -518,7 +570,6 @@ export function GameTable(props: GameTableProps) {
                 <p className="font-serif italic text-amber-100/85 text-center leading-snug" style={{ fontSize: 'var(--font-xs)' }}>
                   Every player drew one card. The lowest card takes the highest rank — the Jester counts as the highest card.
                 </p>
-                {/* progress chip */}
                 <p
                   className={cn(
                     'px-3 py-0.5 rounded-full border font-heading font-bold tracking-wide',
@@ -550,13 +601,9 @@ export function GameTable(props: GameTableProps) {
                           isNext && 'border-amber-300/80 ring-2 ring-amber-400/50'
                         )}
                       >
-                        <span
-                          className="font-heading font-black text-amber-200/80 leading-none"
-                          style={{ fontSize: 'var(--font-xs)' }}
-                        >
+                        <span className="font-heading font-black text-amber-200/80 leading-none" style={{ fontSize: 'var(--font-xs)' }}>
                           #{i + 1}
                         </span>
-                        {/* remount on reveal so the flip-in animation plays exactly once */}
                         <div key={revealed ? 'up' : 'down'} className={revealed ? 'card-fly' : 'animate-pulse'}>
                           {revealed ? <Card card={d.card} size="sm" /> : <CardBackFace size="sm" />}
                         </div>
@@ -573,10 +620,7 @@ export function GameTable(props: GameTableProps) {
                             <span className="text-amber-100/50">• • •</span>
                           )}
                         </span>
-                        <span
-                          className="font-serif italic text-amber-200/90 flex items-center gap-1 leading-tight whitespace-nowrap"
-                          style={{ fontSize: 'var(--font-xs)' }}
-                        >
+                        <span className="font-serif italic text-amber-200/90 flex items-center gap-1 leading-tight whitespace-nowrap" style={{ fontSize: 'var(--font-xs)' }}>
                           {revealed ? (
                             <>
                               <RoleBadge role={p?.role} /> {p?.role ? getRoleName(p.role) : ''}
@@ -595,9 +639,7 @@ export function GameTable(props: GameTableProps) {
                     className="mt-1 px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-purple-950 font-heading font-bold border-2 border-amber-300 shadow-lg transition-transform hover:-translate-y-0.5"
                     style={{ fontSize: 'var(--font-sm)' }}
                   >
-                    {seatsRevealed >= seatingCount
-                      ? 'Take your seats — deal the cards'
-                      : 'Skip the draw & deal now'}
+                    {seatsRevealed >= seatingCount ? 'Take your seats — deal the cards' : 'Skip the draw & deal now'}
                   </button>
                 ) : (
                   <p className="font-serif italic text-amber-100/70" style={{ fontSize: 'var(--font-xs)' }}>
@@ -612,11 +654,7 @@ export function GameTable(props: GameTableProps) {
               <div className="flex flex-col items-center gap-2">
                 <div className="relative deck-pulse" style={{ width: 'var(--card-w-lg)', height: 'var(--card-h-lg)' }}>
                   {[4, 3, 2, 1, 0].map((layer) => (
-                    <div
-                      key={layer}
-                      className="absolute inset-0"
-                      style={{ transform: `translate(${layer * -2}px, ${layer * -2}px)` }}
-                    >
+                    <div key={layer} className="absolute inset-0" style={{ transform: `translate(${layer * -2}px, ${layer * -2}px)` }}>
                       <CardBackFace size="lg" />
                     </div>
                   ))}
@@ -628,7 +666,7 @@ export function GameTable(props: GameTableProps) {
             )}
 
             {/* tribute showcase */}
-            {!dealing && inTaxes && (
+            {!dealing && !seating && inTaxes && (
               <div className="rounded-2xl px-5 py-3 bg-black/35 border-2 border-amber-400/40 shadow-inner flex flex-col items-center gap-2 max-w-[92vw]">
                 {myTributeDue ? (
                   <>
@@ -701,12 +739,15 @@ export function GameTable(props: GameTableProps) {
               </div>
             )}
 
-            {/* the turn hourglass — counts down beneath the centre cards */}
-            {state.phase === 'playing' &&
-              turnDeadline != null &&
-              !state.players[state.currentPlayerIndex]?.isOut && (
-                <TurnClock key={state.turnStartedAt} deadline={turnDeadline} totalMs={TURN_TIMER_MS} />
-              )}
+            {/* the hourglass + YOUR TURN, directly beneath the pile */}
+            {state.phase === 'playing' && state.timerEnabled && turnDeadline != null && (
+              <HourglassTimer key={state.turnStartedAt} deadline={turnDeadline} totalMs={state.timerSeconds * 1000} />
+            )}
+            {isMyTurn && (
+              <div className="turn-banner">
+                <Swords size="1em" /> YOUR TURN
+              </div>
+            )}
 
             {canCallRevolution && (
               <div className="bg-gradient-to-br from-red-950 to-red-800 border-2 border-amber-400 rounded-xl p-3 text-center shadow-2xl max-w-[22rem] fade-in">
@@ -740,8 +781,9 @@ export function GameTable(props: GameTableProps) {
         </div>
       </main>
 
-      {/* ---------------- footer ---------------- */}
+      {/* ---------------- footer: status, actions, hand ---------------- */}
       <footer className="shrink-0 relative z-30 bg-black/50 backdrop-blur border-t-2 border-amber-400/30">
+        {/* status row */}
         <div className="px-3 py-1 flex items-center justify-between gap-2 border-b border-white/5 min-h-[2.4rem]">
           <ActionBarStatus
             state={state}
@@ -753,14 +795,83 @@ export function GameTable(props: GameTableProps) {
             selectedCount={selectedCards.length}
             dealing={dealing}
           />
-          <p className="text-amber-100/70 font-serif whitespace-nowrap" style={{ fontSize: 'var(--font-xs)' }}>
-            {myPlayer.hand.length} cards
-          </p>
+          <div className="flex items-center gap-3">
+            <p className="text-amber-100/70 font-serif whitespace-nowrap" style={{ fontSize: 'var(--font-xs)' }}>
+              {myPlayer.hand.length} cards
+            </p>
+          </div>
         </div>
 
+        {/* action buttons — directly above the hand */}
+        {(state.phase === 'playing' || inTaxes) && !myPlayer.isOut && (
+          <div className="flex justify-center gap-2 px-2 pt-2 flex-wrap">
+            {inTaxes && myTributeDue ? (
+              <button
+                onClick={() => onTribute(selectedCards)}
+                disabled={selectedCards.length !== tributeCount}
+                className={cn(
+                  'flex items-center gap-2 px-5 py-2 rounded-xl font-serif font-bold shadow-lg border-2 transition-all',
+                  selectedCards.length === tributeCount
+                    ? 'bg-amber-500 hover:bg-amber-400 text-purple-950 border-amber-300 hover:-translate-y-0.5'
+                    : 'bg-stone-700/50 text-stone-400 border-stone-600/50 cursor-not-allowed'
+                )}
+                style={{ fontSize: 'var(--font-base)' }}
+              >
+                <Coins size="1em" /> Give Tribute ({selectedCards.length}/{tributeCount})
+              </button>
+            ) : state.phase === 'playing' ? (
+              <>
+                <button
+                  onClick={handlePassButton}
+                  disabled={!canUsePassQueue}
+                  className={cn(
+                    'relative px-6 py-2 rounded-xl font-serif font-bold shadow-lg border-2 transition-all',
+                    passQueued
+                      ? 'bg-amber-500 hover:bg-amber-400 text-purple-950 border-amber-100 pass-queue-glow'
+                      : isMyTurn
+                      ? 'bg-red-800 hover:bg-red-700 text-amber-50 border-red-500 hover:-translate-y-0.5'
+                      : canUsePassQueue
+                      ? 'bg-stone-700/80 hover:bg-stone-600 text-amber-100 border-stone-400 hover:-translate-y-0.5'
+                      : 'bg-stone-700/40 text-stone-400 border-stone-600/40 cursor-not-allowed'
+                  )}
+                  style={{ fontSize: 'var(--font-base)' }}
+                  title={
+                    passQueued
+                      ? 'Click to cancel the queued pass'
+                      : isMyTurn
+                      ? 'Pass now'
+                      : 'Queue a pass for when your turn arrives'
+                  }
+                >
+                  {passQueued ? 'PASS ✓ QUEUED' : isMyTurn ? 'Pass' : 'Queue Pass'}
+                </button>
+                {passQueued && (
+                  <span className="self-center font-serif italic text-amber-200 pass-queue-label" style={{ fontSize: 'var(--font-xs)' }}>
+                    Pass queued
+                  </span>
+                )}
+                <button
+                  onClick={handlePlayButton}
+                  disabled={!isMyTurn || !playValid}
+                  className={cn(
+                    'px-6 py-2 rounded-xl font-serif font-bold shadow-lg border-2 transition-all',
+                    isMyTurn && playValid
+                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-300 hover:-translate-y-0.5'
+                      : 'bg-stone-700/40 text-stone-400 border-stone-600/40 cursor-not-allowed'
+                  )}
+                  style={{ fontSize: 'var(--font-base)' }}
+                >
+                  {selectedCards.length > 0 ? `Play ${describeSet(selectedCards)}` : 'Play'}
+                </button>
+              </>
+            ) : null}
+          </div>
+        )}
+
+        {/* the hand — always fully visible */}
         <div className="px-2 py-2 overflow-x-auto">
-          <div className="flex justify-center items-end min-h-[calc(var(--card-h)_+_1.8rem)] pt-5 min-w-min">
-            {visibleHand.length === 0 && !dealing && (
+          <div className="flex justify-center items-end min-h-[calc(var(--card-h)_+_1.8rem)] pt-4 min-w-min">
+            {visibleHand.length === 0 && !dealing && !seating && (
               <p className="text-amber-200/70 font-serif italic py-8" style={{ fontSize: 'var(--font-sm)' }}>
                 Your hand is empty — you are out for this deal.
               </p>
@@ -790,7 +901,6 @@ export function GameTable(props: GameTableProps) {
                     <Card
                       card={card}
                       selected={isSel}
-                      dimmed={!cardsInteractive && state.phase === 'playing'}
                       onClick={cardsInteractive ? () => toggleCard(card) : undefined}
                     />
                   </div>
@@ -806,8 +916,8 @@ export function GameTable(props: GameTableProps) {
 
 /* ------------------------------------------------------------------ */
 
-/** A clock-faced countdown: depleting ring, sweeping hand, tick marks and seconds. */
-function TurnClock({ deadline, totalMs }: { deadline: number; totalMs: number }) {
+/** Medieval hourglass with draining sand. */
+function HourglassTimer({ deadline, totalMs }: { deadline: number; totalMs: number }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 100);
@@ -817,76 +927,53 @@ function TurnClock({ deadline, totalMs }: { deadline: number; totalMs: number })
   const remaining = Math.max(0, deadline - now);
   const frac = Math.max(0, Math.min(1, remaining / totalMs));
   const secs = Math.ceil(remaining / 1000);
-  const danger = remaining <= 5000;
-  const warn = remaining <= 10000;
-  const color = danger ? '#ef4444' : warn ? '#f59e0b' : '#34d399';
-  const R = 30;
-  const C = 2 * Math.PI * R;
-  const hand = (1 - frac) * 360;
+  const warn = remaining <= 5000 && remaining > 0;
+  const sand = '#e8c56b';
+  const sandDark = '#c9992e';
+  const frame = '#d4af37';
 
   return (
-    <div className={cn('flex flex-col items-center gap-0.5 mt-2 pointer-events-none', danger && 'animate-pulse')}>
-      <div
-        className="relative drop-shadow-[0_4px_14px_rgba(0,0,0,0.6)]"
-        style={{ width: 'clamp(76px, 6.2vw, 150px)', height: 'clamp(76px, 6.2vw, 150px)' }}
+    <div className={cn('flex flex-col items-center gap-0.5 mt-2 pointer-events-none', warn && 'hg-warn')}>
+      <svg viewBox="0 0 80 96" style={{ width: 'clamp(64px, 5.6vw, 132px)', height: 'auto' }} aria-label={`${secs} seconds left`}>
+        {/* frame caps */}
+        <rect x="8" y="2" width="64" height="6" rx="3" fill={frame} />
+        <rect x="8" y="88" width="64" height="6" rx="3" fill={frame} />
+        <rect x="12" y="8" width="4" height="80" rx="2" fill={frame} opacity="0.85" />
+        <rect x="64" y="8" width="4" height="80" rx="2" fill={frame} opacity="0.85" />
+        {/* glass */}
+        <path
+          d="M18 8 C18 34 34 40 38 46 L38 50 C34 56 18 62 18 88 L62 88 C62 62 46 56 42 50 L42 46 C46 40 62 34 62 8 Z"
+          fill="rgba(255,250,230,0.10)"
+          stroke="rgba(255,250,230,0.45)"
+          strokeWidth="1.6"
+        />
+        {/* top sand: shrinks toward the neck */}
+        <g transform={`translate(0 ${46 * (1 - frac)}) scale(1 ${Math.max(0.001, frac)})`}>
+          <path d="M20 10 C20 32 35 39 39 45 L41 45 C45 39 60 32 60 10 Z" fill={sand} />
+          <path d="M20 10 L60 10 L58 15 L22 15 Z" fill={sandDark} opacity="0.7" />
+        </g>
+        {/* falling stream: spans from the neck down to the top of the mound */}
+        {frac > 0 && remaining > 0 && (
+          <rect x="39" y="46" width="2" height={8 + 34 * frac} fill={sand} className="hg-stream" />
+        )}
+        {/* bottom mound: grows from the base */}
+        <g transform={`translate(0 ${88 * frac}) scale(1 ${Math.max(0.001, 1 - frac)})`}>
+          <path d="M20 88 C24 66 36 60 40 54 C44 60 56 66 60 88 Z" fill={sand} />
+          <path d="M24 88 L56 88 L52 82 L28 82 Z" fill={sandDark} opacity="0.55" />
+        </g>
+      </svg>
+      <span
+        className="font-heading font-black leading-none"
+        style={{
+          fontSize: 'var(--font-base)',
+          color: warn ? '#fca5a5' : '#fcd34d',
+          textShadow: '0 1px 8px rgba(0,0,0,0.85)',
+        }}
       >
-        <svg viewBox="0 0 72 72" className="w-full h-full">
-          {/* clock-face ticks */}
-          {Array.from({ length: 12 }).map((_, i) => (
-            <line
-              key={i}
-              x1="36"
-              y1="3.5"
-              x2="36"
-              y2={i % 3 === 0 ? 9 : 7}
-              stroke="rgba(245,176,65,0.55)"
-              strokeWidth={i % 3 === 0 ? 2 : 1}
-              transform={`rotate(${i * 30} 36 36)`}
-            />
-          ))}
-          <circle cx="36" cy="36" r={R} fill="rgba(0,0,0,0.42)" stroke="rgba(245,176,65,0.22)" strokeWidth="4" />
-          {/* depleting ring */}
-          <circle
-            cx="36"
-            cy="36"
-            r={R}
-            fill="none"
-            stroke={color}
-            strokeWidth="4"
-            strokeLinecap="round"
-            strokeDasharray={C}
-            strokeDashoffset={C * (1 - frac)}
-            transform="rotate(-90 36 36)"
-            style={{ transition: 'stroke-dashoffset 120ms linear, stroke 300ms linear' }}
-          />
-          {/* sweeping hand */}
-          <line
-            x1="36"
-            y1="36"
-            x2="36"
-            y2="13"
-            stroke={color}
-            strokeWidth="2.2"
-            strokeLinecap="round"
-            transform={`rotate(${hand} 36 36)`}
-            style={{ transition: 'transform 120ms linear' }}
-          />
-          <circle cx="36" cy="36" r="2.6" fill={color} />
-        </svg>
-        <div className="absolute inset-0 flex items-end justify-center pb-[16%]">
-          <span
-            className="font-heading font-black leading-none"
-            style={{ fontSize: 'var(--font-base)', color, textShadow: '0 1px 8px rgba(0,0,0,0.85)' }}
-          >
-            {secs}
-          </span>
-        </div>
-      </div>
-      <p
-        className="font-serif italic text-amber-200/90 flex items-center gap-1 bg-black/35 rounded-full px-2 py-0.5"
-        style={{ fontSize: 'var(--font-tiny)' }}
-      >
-        <Hourglass size="1em" /> auto-pass in {secs}s
+        {secs}
+      </span>
+      <p className="font-serif italic text-amber-200/90 flex items-center gap-1 bg-black/35 rounded-full px-2 py-0.5" style={{ fontSize: 'var(--font-tiny)' }}>
+        <Hourglass size="1em" /> the sand runs out — auto-pass
       </p>
     </div>
   );
@@ -966,18 +1053,12 @@ function ActionBarStatus({
   return (
     <p className="text-amber-100 font-serif" style={{ fontSize: 'var(--font-sm)' }}>
       {isMyTurn ? (
-        <span className="font-bold text-amber-300 glow-pulse rounded px-2 py-0.5">Your turn</span>
+        <span className="font-bold text-amber-300">Your turn — play or pass below</span>
       ) : (
         <>
           Waiting on{' '}
           <span className="font-bold text-amber-300 inline-flex items-center gap-1.5">
-            {current ? (
-              <>
-                <RoleBadge role={current.role} /> {current.name}
-              </>
-            ) : (
-              '…'
-            )}
+            <RoleBadge role={current?.role} /> {current?.name ?? '…'}
           </span>
         </>
       )}
@@ -1025,6 +1106,8 @@ function OpponentRing({
   dealing,
   myIdx,
   totalPlayers,
+  canKick,
+  onKick,
   dealtFor,
 }: {
   opponents: Player[];
@@ -1032,6 +1115,8 @@ function OpponentRing({
   dealing: boolean;
   myIdx: number;
   totalPlayers: number;
+  canKick: boolean;
+  onKick: (id: string) => void;
   dealtFor: ((seatIdxInPlayers: number) => number) | null;
 }) {
   return (
@@ -1050,6 +1135,8 @@ function OpponentRing({
             (state.pendingTaxes.lesserDalmutiId === opp.id &&
               state.pendingTaxes.lesserExchangeRequired &&
               state.pendingTaxes.lesserDalmutiCardGiven === null));
+        const passed = state.passedIds.includes(opp.id);
+        const afk = state.afkCounts[opp.id] ?? 0;
 
         const shownCount = dealing && dealtFor ? dealtFor(seatIdx) : opp.hand.length;
         const shown = Math.min(shownCount, 7);
@@ -1072,7 +1159,8 @@ function OpponentRing({
                   : owesTribute
                   ? 'bg-purple-800/80 border-amber-400/60'
                   : 'bg-black/55 border-amber-700/40',
-                opp.isOut && 'opacity-45 grayscale'
+                opp.isOut && 'opacity-45 grayscale',
+                passed && !opp.isOut && 'opacity-60'
               )}
             >
               <p
@@ -1090,12 +1178,40 @@ function OpponentRing({
                 className={cn('leading-tight', isCurrent ? 'text-purple-900/80' : 'text-amber-200/70')}
                 style={{ fontSize: 'var(--font-tiny)' }}
               >
-                {opp.isOut && opp.finishOrder
+                {opp.isOut && opp.finishOrder && opp.finishOrder < 900
                   ? `finished #${opp.finishOrder}`
                   : owesTribute
                   ? 'choosing tribute…'
                   : `${opp.role ? getRoleName(opp.role) + ' · ' : ''}${shownCount} cards`}
               </p>
+              {/* badges: PASSED / AFK / kick */}
+              <div className="flex items-center justify-center gap-1 mt-0.5 min-h-[1.2em] flex-wrap">
+                {passed && !opp.isOut && (
+                  <span className="inline-flex items-center gap-1 px-1.5 rounded-full bg-stone-700/90 border border-stone-400/70 text-stone-100 font-heading font-bold" style={{ fontSize: 'var(--font-tiny)' }}>
+                    <Ban size="1em" /> PASSED
+                  </span>
+                )}
+                {afk === 1 && (
+                  <span className="inline-flex items-center gap-1 px-1.5 rounded-full bg-amber-600/90 border border-amber-300/70 text-amber-50 font-heading font-bold" style={{ fontSize: 'var(--font-tiny)' }}>
+                    <AlarmClock size="1em" /> missed turn
+                  </span>
+                )}
+                {afk >= 2 && (
+                  <span className="inline-flex items-center gap-1 px-1.5 rounded-full bg-red-700/90 border border-red-300/70 text-red-50 font-heading font-bold" style={{ fontSize: 'var(--font-tiny)' }}>
+                    <UserX size="1em" /> AFK
+                  </span>
+                )}
+                {canKick && afk >= 2 && !opp.kicked && !opp.isOut && (
+                  <button
+                    onClick={() => onKick(opp.id)}
+                    className="inline-flex items-center gap-1 px-1.5 rounded-full bg-red-900 hover:bg-red-700 border border-red-400/70 text-red-100 font-heading font-bold transition-colors"
+                    style={{ fontSize: 'var(--font-tiny)' }}
+                    title={`Kick ${opp.name} (missed ${afk} turns)`}
+                  >
+                    <UserMinus size="1em" /> Kick
+                  </button>
+                )}
+              </div>
             </div>
             <div className="flex items-end" style={{ minHeight: 'var(--card-h-xs)' }}>
               {Array.from({ length: shown }).map((_, ci) => (
@@ -1113,19 +1229,95 @@ function OpponentRing({
   );
 }
 
+function KickDialog({
+  name,
+  onChoose,
+  onCancel,
+}: {
+  name: string;
+  onChoose: (kind: 'remove' | 'ai') => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onCancel} />
+      <div className="relative bg-gradient-to-br from-amber-50 to-amber-100 rounded-2xl border-4 border-red-900/50 p-6 max-w-sm w-full slide-up text-center">
+        <UserX className="mx-auto mb-2 text-red-800" size="2.4rem" />
+        <p className="font-heading font-black text-red-900 italic mb-1" style={{ fontSize: 'var(--font-base)' }}>
+          Remove {name}?
+        </p>
+        <p className="font-serif text-amber-800 mb-4" style={{ fontSize: 'var(--font-xs)' }}>
+          They have missed two turns. Replacing the seat with an AI keeps the hand going; removing it
+          empties the chair until the next deal.
+        </p>
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={() => onChoose('ai')}
+            className="w-full py-2 flex items-center justify-center gap-2 bg-purple-800 hover:bg-purple-700 text-amber-100 rounded-lg font-serif font-bold"
+            style={{ fontSize: 'var(--font-sm)' }}
+          >
+            <Bot size="1em" /> Replace with an AI
+          </button>
+          <button
+            onClick={() => onChoose('remove')}
+            className="w-full py-2 flex items-center justify-center gap-2 bg-red-800 hover:bg-red-700 text-red-50 rounded-lg font-serif font-bold"
+            style={{ fontSize: 'var(--font-sm)' }}
+          >
+            <UserMinus size="1em" /> Remove from the table
+          </button>
+          <button onClick={onCancel} className="w-full py-2 bg-stone-200 hover:bg-stone-300 text-stone-800 rounded-lg font-serif font-bold" style={{ fontSize: 'var(--font-sm)' }}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function KickedScreen({ kind, onLeave }: { kind: 'remove' | 'ai'; onLeave?: () => void }) {
+  return (
+    <div className="fixed inset-0 flex items-center justify-center p-4" style={{ background: 'radial-gradient(ellipse at center, #4a1a6b 0%, #1a0a2e 55%, #0a0518 100%)' }}>
+      <div className="bg-gradient-to-br from-amber-50 to-amber-100 rounded-2xl shadow-2xl border-4 border-red-900/40 p-7 max-w-md w-full text-center slide-up">
+        <UserX className="mx-auto mb-3 text-red-800" size="3rem" />
+        <h2 className="font-heading font-black text-red-900 italic mb-2" style={{ fontSize: 'var(--font-xl)' }}>
+          You left the table
+        </h2>
+        <p className="font-serif text-amber-900 mb-5" style={{ fontSize: 'var(--font-sm)' }}>
+          {kind === 'ai'
+            ? 'The host handed your seat to a court AI for the rest of this hand.'
+            : 'The host removed your seat from this hand.'}{' '}
+          You can head back to the lobby and join the next game.
+        </p>
+        {onLeave && (
+          <button
+            onClick={onLeave}
+            className="w-full py-3 flex items-center justify-center gap-2 bg-purple-800 hover:bg-purple-700 text-amber-100 font-serif font-bold rounded-lg shadow-lg"
+            style={{ fontSize: 'var(--font-base)' }}
+          >
+            <DoorOpen size="1em" /> Return to the lobby
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function HandEndScreen({
   state,
   myPlayerId,
   isHost,
   onNextHand,
+  onReturnToLobby,
   onBackToLobby,
 }: {
   state: GameState;
   myPlayerId: string;
   isHost: boolean;
   onNextHand: () => void;
+  onReturnToLobby?: () => void;
   onBackToLobby?: () => void;
 }) {
+  const [confirmReturn, setConfirmReturn] = useState(false);
   const last = state.handResults[state.handResults.length - 1];
   const roles: Role[] = rolesForSeating(state.players.length);
   const me = last?.standings.find((s) => s.playerId === myPlayerId);
@@ -1198,13 +1390,24 @@ function HandEndScreen({
 
         <div className="flex flex-col gap-2">
           {isHost ? (
-            <button
-              onClick={onNextHand}
-              className="w-full py-3 bg-gradient-to-r from-purple-700 to-purple-900 hover:from-purple-600 hover:to-purple-800 text-amber-100 font-serif font-bold rounded-lg shadow-lg border-2 border-amber-400/30 transition-transform hover:-translate-y-0.5"
-              style={{ fontSize: 'var(--font-base)' }}
-            >
-              Deal the Next Hand
-            </button>
+            <>
+              <button
+                onClick={onNextHand}
+                className="w-full py-3 bg-gradient-to-r from-purple-700 to-purple-900 hover:from-purple-600 hover:to-purple-800 text-amber-100 font-serif font-bold rounded-lg shadow-lg border-2 border-amber-400/30 transition-transform hover:-translate-y-0.5"
+                style={{ fontSize: 'var(--font-base)' }}
+              >
+                Start Next Game
+              </button>
+              {onReturnToLobby && (
+                <button
+                  onClick={() => setConfirmReturn(true)}
+                  className="w-full py-2.5 flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-400 text-purple-950 font-serif font-bold rounded-lg shadow-lg border-2 border-amber-300 transition-transform hover:-translate-y-0.5"
+                  style={{ fontSize: 'var(--font-sm)' }}
+                >
+                  <DoorOpen size="1em" /> Return To Lobby
+                </button>
+              )}
+            </>
           ) : (
             <p className="text-center text-amber-800 font-serif italic py-2" style={{ fontSize: 'var(--font-sm)' }}>
               Waiting for the host to deal the next hand…
@@ -1213,17 +1416,46 @@ function HandEndScreen({
           {onBackToLobby && (
             <button
               onClick={onBackToLobby}
-              className="w-full py-2 bg-stone-200 hover:bg-stone-300 text-stone-800 font-serif rounded-lg"
+              className="w-full py-2 flex items-center justify-center gap-2 bg-stone-200 hover:bg-stone-300 text-stone-800 font-serif rounded-lg"
               style={{ fontSize: 'var(--font-sm)' }}
             >
-              Leave Game
+              <LogOut size="1em" /> Leave Game
             </button>
           )}
         </div>
       </div>
+
+      {confirmReturn && onReturnToLobby && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setConfirmReturn(false)} />
+          <div className="relative bg-gradient-to-br from-amber-50 to-amber-100 rounded-2xl border-4 border-amber-900/40 p-6 max-w-sm w-full slide-up text-center">
+            <DoorOpen className="mx-auto mb-2 text-purple-800" size="2.4rem" />
+            <p className="font-heading font-black text-purple-900 italic mb-1" style={{ fontSize: 'var(--font-base)' }}>
+              Return everyone to the lobby?
+            </p>
+            <p className="font-serif text-amber-800 mb-4" style={{ fontSize: 'var(--font-xs)' }}>
+              The table stays open, nobody is disconnected, and ready status resets so new guests can join.
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => setConfirmReturn(false)} className="flex-1 py-2 bg-stone-200 hover:bg-stone-300 text-stone-800 rounded-lg font-serif font-bold" style={{ fontSize: 'var(--font-sm)' }}>
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setConfirmReturn(false);
+                  onReturnToLobby();
+                }}
+                className="flex-1 py-2 bg-purple-800 hover:bg-purple-700 text-amber-100 rounded-lg font-serif font-bold"
+                style={{ fontSize: 'var(--font-sm)' }}
+              >
+                Return To Lobby
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-// keep CARD_INFO referenced for potential tooltips
-void CARD_INFO;
+

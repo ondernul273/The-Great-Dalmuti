@@ -145,7 +145,7 @@ export function drawForSeats(players: Player[]): { ordered: Player[]; draws: Sea
  */
 export function initializeNewGame(
   players: Player[],
-  opts: { timerEnabled?: boolean } = {}
+  opts: { timerEnabled?: boolean; timerSeconds?: number } = {}
 ): GameState {
   const { ordered, draws } = drawForSeats(players.map((p) => ({ ...p, hand: [] })));
   const dealt = dealHands(ordered);
@@ -166,8 +166,54 @@ export function initializeNewGame(
     totalScores: {},
     turnStartedAt: Date.now(),
     timerEnabled: opts.timerEnabled ?? true,
+    timerSeconds: opts.timerSeconds ?? 60,
+    afkCounts: {},
+    passedIds: [],
     seatingDraw: draws,
   };
+}
+
+/**
+ * Host-only moderation. `remove` empties the seat (spectator until the next
+ * reseat, where it disappears); `ai` hands the seat to a court AI that plays on.
+ */
+export function applyKick(
+  state: GameState,
+  playerId: string,
+  kind: 'remove' | 'ai',
+  aiName?: string
+): GameState {
+  const s = structuredClone(state);
+  const idx = s.players.findIndex((p) => p.id === playerId);
+  if (idx === -1) return state;
+  const p = s.players[idx];
+  if (p.kicked) return state;
+  const oldName = p.name;
+  p.kicked = true;
+
+  if (kind === 'ai') {
+    p.id = `ai-kick-${Math.random().toString(36).slice(2, 7)}`;
+    p.name = aiName ?? 'Courtier';
+    p.isHost = false;
+    s.message = `${oldName} left the seat — ${p.name} takes over the hand.`;
+  } else {
+    p.dropped = true;
+    p.isOut = true;
+    p.hand = [];
+    p.finishOrder = 900; // always sorted last; last place scores 0
+    s.passedIds = s.passedIds.filter((id) => id !== playerId);
+    s.message = `${oldName} was removed from the table by the host.`;
+    if (s.currentPlayerIndex === idx) {
+      s.currentPlayerIndex = findNextActivePlayer(s, idx);
+      s.turnStartedAt = Date.now();
+    }
+    if (s.leaderIndex === idx) {
+      s.leaderIndex = s.lastValidPlay
+        ? Math.max(0, s.players.findIndex((pl) => pl.id === s.lastValidPlay!.playerId))
+        : s.currentPlayerIndex;
+    }
+  }
+  return s;
 }
 
 /** Moves from the 'seating' reveal into the dealing animation. */
@@ -188,9 +234,13 @@ export function startTaxation(state: GameState): GameState {
 
 export function reseatForNextHand(state: GameState): GameState {
   const s = structuredClone(state);
-  const ordered = [...s.players].sort((a, b) => (a.finishOrder ?? 99) - (b.finishOrder ?? 99));
+  // Dropped seats (host-kicked "remove") leave the table for good.
+  const continuing = s.players.filter((p) => !p.dropped);
+  const ordered = [...continuing].sort(
+    (a, b) => (a.kicked ? 1_000_000 : a.finishOrder ?? 99) - (b.kicked ? 1_000_000 : b.finishOrder ?? 99)
+  );
   const roles = rolesForSeating(ordered.length);
-  const reseated = ordered.map((p, i) => ({ ...p, role: roles[i], hand: [] }));
+  const reseated = ordered.map((p, i) => ({ ...p, role: roles[i], hand: [], kicked: false }));
 
   s.players = dealHands(reseated);
   s.currentPlayerIndex = 0;
@@ -201,6 +251,7 @@ export function reseatForNextHand(state: GameState): GameState {
   s.revolutionCalled = false;
   s.pendingTaxes = null;
   s.seatingDraw = null;
+  s.passedIds = [];
   s.phase = 'dealing';
   s.message = 'New ranks assigned. The Greater Peon shuffles and deals…';
   s.turnStartedAt = Date.now();
@@ -404,14 +455,15 @@ export function describeSet(cards: Card[]): string {
  */
 function recordHandResult(s: GameState): void {
   const n = s.players.length;
-  const sorted = [...s.players].sort(
-    (a, b) => (a.finishOrder ?? 99) - (b.finishOrder ?? 99)
+  const sortedStandings = [...s.players].sort(
+    (a, b) =>
+      (a.kicked ? 1_000_000 : a.finishOrder ?? 99) - (b.kicked ? 1_000_000 : b.finishOrder ?? 99)
   );
   const result: HandResult = {
     hand: s.handNumber,
-    standings: sorted.map((p, idx) => ({
+    standings: sortedStandings.map((p, idx) => ({
       playerId: p.id,
-      name: p.name,
+      name: p.kicked ? `${p.name} (removed)` : p.name,
       place: idx + 1,
       points: Math.max(0, n - 1 - idx),
     })),
@@ -432,11 +484,15 @@ export function applyPlay(state: GameState, playerId: string, cards: Card[]): Ga
   if (effRank === null) return state;
   if (!canPlayCards(cards, s.lastValidPlay)) return state;
 
+  const wasClear = s.lastValidPlay === null;
   const cardIds = new Set(cards.map((c) => c.id));
   s.players[playerIdx].hand = s.players[playerIdx].hand.filter((c) => !cardIds.has(c.id));
 
   const play: PlayedSet = { playerId, cards, effectiveRank: effRank };
   s.currentTrick.push(play);
+  // A fresh lead clears every PASSED badge; playing also clears your own.
+  if (wasClear) s.passedIds = [];
+  s.passedIds = s.passedIds.filter((id) => id !== playerId);
   s.lastValidPlay = play;
   s.leaderIndex = playerIdx;
 
@@ -480,11 +536,25 @@ export function applyPass(
   const s = structuredClone(state);
   const playerIdx = s.players.findIndex((p) => p.id === playerId);
   if (playerIdx === -1) return state;
+  // The host is authoritative. Queued UI passes, delayed network packets and
+  // duplicate clicks are ignored unless this player is truly on turn now.
+  if (s.phase !== 'playing' || s.players[s.currentPlayerIndex]?.id !== playerId) return state;
+  if (s.players[playerIdx].isOut || s.players[playerIdx].kicked) return state;
 
   const nextIdx = findNextActivePlayer(s, playerIdx);
-  s.message = opts?.timedOut
-    ? `⏳ ${s.players[playerIdx].name}'s hourglass empties — they pass.`
-    : `${s.players[playerIdx].name} passes.`;
+  const name = s.players[playerIdx].name;
+
+  if (opts?.timedOut) {
+    const count = (s.afkCounts[playerId] ?? 0) + 1;
+    s.afkCounts[playerId] = count;
+    s.message =
+      count >= 2
+        ? `⏳ ${name} appears to be AFK. (missed ${count} turns)`
+        : `⏳ Warning: ${name} missed a turn.`;
+  } else {
+    s.message = `${name} passes.`;
+  }
+  if (!s.passedIds.includes(playerId)) s.passedIds.push(playerId);
 
   let effectiveLeader = s.leaderIndex;
   if (s.players[effectiveLeader].isOut) {
@@ -492,9 +562,10 @@ export function applyPass(
   }
 
   if (nextIdx === effectiveLeader) {
-    s.message = `${s.players[effectiveLeader].name} takes the trick and leads.`;
+    if (!opts?.timedOut) s.message = `${s.players[effectiveLeader].name} takes the trick and leads.`;
     s.currentTrick = [];
     s.lastValidPlay = null;
+    s.passedIds = [];
     s.leaderIndex = effectiveLeader;
     s.currentPlayerIndex = effectiveLeader;
   } else {

@@ -239,6 +239,12 @@ export function useSocketLobby({ onGameMessage, onLobbyChat, onClosed, onStarted
     socketRef.current?.emit('lobby:start', {});
   }, []);
 
+  /** Host: reopen the lobby between games (keeps everyone connected, resets ready). */
+  const reopenLobby = useCallback(() => {
+    log('lobby:reopen');
+    socketRef.current?.emit('lobby:reopen', {});
+  }, []);
+
   /* --------------------- game traffic (unified) --------------------- */
 
   const sendGame = useCallback((to: string, type: string, payload: unknown) => {
@@ -274,6 +280,7 @@ export function useSocketLobby({ onGameMessage, onLobbyChat, onClosed, onStarted
     addAI,
     removeAI,
     startGame,
+    reopenLobby,
     sendGame,
     broadcastGame,
     clearError,

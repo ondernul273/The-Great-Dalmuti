@@ -32,6 +32,8 @@ export function ChatPanel({
     if (open && listRef.current) {
       listRef.current.scrollTop = listRef.current.scrollHeight;
     }
+    const last = messages[messages.length - 1];
+    if (last) console.log('[CHAT] rendered', last.id, last.name, ':', last.text);
   }, [messages, open]);
 
   if (!open) return null;
