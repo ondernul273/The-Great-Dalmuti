@@ -7,7 +7,8 @@ import { Card } from './Card';
 import { IceDiagnosticsBox, NetworkTestBox } from './NetworkPanel';
 import { RulesPanel } from './RulesPanel';
 import { StatsPanel } from './StatsPanel';
-import { cardSetLabel } from './cardAssets';
+import { CardSetPanel } from './CardSetPanel';
+import { listCardSets } from './cardAssets';
 import { cn } from '../utils/cn';
 import lobbyHall from '../assets/lobby-hall.jpg';
 import {
@@ -32,6 +33,8 @@ import {
   Play,
   Users,
   Trophy,
+  Layers,
+  Eye,
 } from 'lucide-react';
 
 interface LobbyProps {
@@ -45,11 +48,6 @@ interface LobbyProps {
   onTimerSeconds: (s: number) => void;
   maxSeats: number;
   minSeats: number;
-  /** Available card sets detected at build time. */
-  cardSets: string[];
-  /** Currently selected card set (host-controlled; guests read it from state). */
-  cardSet: string;
-  onCardSetChange: (name: string) => void;
   error?: string | null;
   /* direct connect (PeerJS) */
   status: PeerStatus;
@@ -83,6 +81,9 @@ interface LobbyProps {
   onBanquetChat: (t: string) => void;
   onBanquetAddAI: () => void;
   onBanquetRemoveAI: (id: string) => void;
+  /* card artwork set, synced table-wide */
+  currentCardSet: string;
+  onCardSet: (set: string) => void;
 }
 
 type Screen =
@@ -116,9 +117,6 @@ export function Lobby(props: LobbyProps) {
     onTimerSeconds,
     maxSeats,
     minSeats,
-    cardSets,
-    cardSet,
-    onCardSetChange,
     error,
     status,
     roomCode,
@@ -148,15 +146,18 @@ export function Lobby(props: LobbyProps) {
     onBanquetReady,
     onBanquetStart,
     onBanquetChat,
-    onBanquetAddAI,
-    onBanquetRemoveAI,
-  } = props;
+  onBanquetAddAI,
+  onBanquetRemoveAI,
+  currentCardSet,
+  onCardSet,
+} = props;
 
   const [screen, setScreen] = useState<Screen>('menu');
   const [joinCode, setJoinCode] = useState('');
   const [numAI, setNumAI] = useState(3);
   const [showRules, setShowRules] = useState(false);
   const [showStats, setShowStats] = useState(false);
+  const [showCardSets, setShowCardSets] = useState(false);
 
   /* banquet form state */
   const [lobbyName, setLobbyName] = useState('');
@@ -169,6 +170,8 @@ export function Lobby(props: LobbyProps) {
 
   const seatCount = roster?.length || peers.length + 1;
   const aiOptions = Array.from({ length: maxSeats - 2 }, (_, i) => i + 2);
+  const currentSetLabel =
+    listCardSets().find((s) => s.id === currentCardSet)?.label ?? currentCardSet;
 
   /* keep the lobby room screen in sync with the socket session */
   useEffect(() => {
@@ -199,6 +202,15 @@ export function Lobby(props: LobbyProps) {
     >
       {showRules && <RulesPanel onClose={() => setShowRules(false)} />}
       {showStats && <StatsPanel onClose={() => setShowStats(false)} />}
+      {showCardSets && (
+        <CardSetPanel
+          current={currentCardSet}
+          onSelect={(set) => {
+            onCardSet(set);
+          }}
+          onClose={() => setShowCardSets(false)}
+        />
+      )}
 
       {/* Hall backdrop */}
       <div
@@ -303,31 +315,6 @@ export function Lobby(props: LobbyProps) {
               />
             </div>
 
-            <div className="mb-5">
-              <label className="block text-amber-900 font-serif font-bold mb-1" style={{ fontSize: 'var(--font-sm)' }}>
-                Card Set
-              </label>
-              {cardSets.length > 1 ? (
-                <select
-                  value={cardSet}
-                  onChange={(e) => onCardSetChange(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-lg border-2 border-amber-700/30 bg-white/80 focus:border-amber-600 focus:outline-none font-serif text-amber-900 cursor-pointer"
-                  style={{ fontSize: 'var(--font-base)' }}
-                  title="The card art all players will see. Change before starting."
-                >
-                  {cardSets.map((s) => (
-                    <option key={s} value={s}>
-                      {cardSetLabel(s)}{s === 'classic' ? ' (default)' : ''}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <p className="px-4 py-2.5 rounded-lg border-2 border-amber-300/60 bg-white/60 font-serif text-amber-900/70 italic" style={{ fontSize: 'var(--font-base)' }}>
-                  {cardSetLabel(cardSet)} — add more decks by dropping folders of PNGs into src/assets/cardsets/
-                </p>
-              )}
-            </div>
-
             {/* =============== MAIN MENU =============== */}
             {screen === 'menu' && (
               <div className="space-y-3">
@@ -376,6 +363,16 @@ export function Lobby(props: LobbyProps) {
                     <Trophy size="1.1em" /> My Stats
                   </button>
                 </div>
+                <button
+                  onClick={() => setShowCardSets(true)}
+                  className="w-full py-2.5 flex items-center justify-center gap-2 rounded-lg border-2 border-amber-600/50 bg-white/50 hover:bg-white/80 text-amber-900 font-heading font-bold transition-colors"
+                  style={{ fontSize: 'var(--font-sm)' }}
+                >
+                  <Layers size="1.1em" /> Card Set
+                  <span className="font-serif font-normal italic text-amber-800/90">
+                    — {currentSetLabel}
+                  </span>
+                </button>
               </div>
             )}
 
@@ -700,9 +697,29 @@ export function Lobby(props: LobbyProps) {
                             </button>
                           </div>
                         )}
-                        <div className="mt-2 flex justify-end">
+                        <div className="mt-2 flex justify-end gap-2">
+                          {(full || l.inGame) && (
+                            <button
+                              onClick={() => {
+                                if (l.passworded && pwFor !== l.id) return setPwFor(l.id);
+                                onBanquetJoin(l.id, l.passworded ? pwInput : '');
+                                setPwFor(null);
+                                setPwInput('');
+                              }}
+                              className="px-4 py-1.5 rounded-lg bg-sky-800 hover:bg-sky-700 text-sky-50 font-serif font-bold inline-flex items-center gap-1.5"
+                              style={{ fontSize: 'var(--font-sm)' }}
+                              title="Watch the current game; take a seat when one frees up"
+                            >
+                              <Eye size="1em" /> Join as Spectator
+                            </button>
+                          )}
                           <button
-                            onClick={() => (l.passworded ? setPwFor(l.id) : onBanquetJoin(l.id, ''))}
+                            onClick={() => {
+                              if (l.passworded && pwFor !== l.id) return setPwFor(l.id);
+                              onBanquetJoin(l.id, l.passworded ? pwInput : '');
+                              setPwFor(null);
+                              setPwInput('');
+                            }}
                             disabled={full || l.inGame}
                             className="px-4 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-serif font-bold"
                             style={{ fontSize: 'var(--font-sm)' }}

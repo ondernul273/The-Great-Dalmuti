@@ -151,35 +151,38 @@ const clearGrace = (l) => {
 
 const sendError = (socket, message) => socket.emit('error', { message });
 
-/** First `maxPlayers` humans+AI (join order) are "active"; the rest spectate. */
-const activeCount = (l) => Math.min(l.players.length, l.maxPlayers);
-
 /**
- * Pick the human (non-AI) player who has been connected longest and promote
- * them to host. Always picks a real human — AI seats are never hosts.
+ * Host succession: the longest-connected active (connected, human) player
+ * takes over. Returns the promoted player, or null when nobody qualifies.
+ * The lobby itself always survives as long as a human remains.
  */
-function transferHost(lobby, leavingName) {
-  // Humans sorted by their original join timestamp (ascending).
-  const humans = lobby.players
-    .filter((p) => !p.isAI)
-    .sort((a, b) => (lobby.joinedAt[a.id] ?? 0) - (lobby.joinedAt[b.id] ?? 0));
-  if (humans.length === 0) return;
-  const next = humans[0];
+function promoteHost(lobby, excludeClientId) {
+  const candidates = lobby.players
+    .filter((p) => !p.isAI && p.id !== excludeClientId && p.connected !== false)
+    .sort((a, b) => (a.joinedAt ?? 0) - (b.joinedAt ?? 0));
+  const next = candidates[0];
+  if (!next) return null;
+  const oldHostName = lobby.hostName;
   lobby.hostId = next.id;
   lobby.hostName = next.name;
-  // Mark the new host's ready state so a game-in-progress isn't stuck on a
-  // "waiting for host ready" that no longer exists.
-  if (!lobby.inGame) next.ready = true;
-  console.log(
-    `[banquet] lobby ${lobby.id} host transferred from ${leavingName} → ${next.name}`
-  );
+  for (const p of lobby.players) p.isHost = p.id === next.id;
+  next.ready = true;
+  io.to(room(lobby.id)).emit('lobby:hostChanged', {
+    newHostId: next.id,
+    oldHostName,
+    newHostName: next.name,
+  });
   io.to(room(lobby.id)).emit('lobby:chat', {
     name: 'Herald',
-    text: `${leavingName} left the game. ${next.name} is now the host.`,
+    text: `${oldHostName} left the game. ${next.name} is now the host.`,
     system: true,
   });
-  broadcastLobby(lobby);
+  console.log(`[banquet] lobby ${lobby.id}: host ${oldHostName} → ${next.name}`);
+  return next;
 }
+
+/** First `maxPlayers` humans+AI (join order) are "active"; the rest spectate. */
+const activeCount = (l) => Math.min(l.players.length, l.maxPlayers);
 
 function finalizeRemoval(lobby, clientId) {
   graceTimers.delete(clientId);
@@ -188,14 +191,17 @@ function finalizeRemoval(lobby, clientId) {
   lobby.players = lobby.players.filter((p) => p.id !== clientId);
   if (leaver.socketId) socketIndex.delete(leaver.socketId);
 
-  // Host left or timed out → transfer, don't close the lobby.
   if (lobby.hostId === clientId) {
-    if (lobby.players.some((p) => !p.isAI)) {
-      transferHost(lobby, leaver.name);
-    } else {
-      console.log(`[banquet] lobby ${lobby.id} closed (no human players left)`);
+    // Host is gone for good — hand the table to the next in line instead of
+    // closing the lobby. The game and every remaining seat survive.
+    const next = promoteHost(lobby, clientId);
+    if (!next) {
+      console.log(`[banquet] lobby ${lobby.id} closed (host gone, no one left to host)`);
       removeLobby(lobby, 'The host left the banquet.');
+      return;
     }
+    broadcastLobby(lobby);
+    broadcastStats();
     return;
   }
   if (lobby.players.length === 0) {
@@ -248,9 +254,8 @@ io.on('connection', (socket) => {
       password: password || null,
       maxPlayers,
       inGame: false,
-      joinedAt: { [clientId]: Date.now() },
       players: [
-        { id: clientId, socketId: socket.id, name: hostName, isHost: true, ready: true, isAI: false, connected: true },
+        { id: clientId, socketId: socket.id, name: hostName, isHost: true, ready: true, isAI: false, connected: true, joinedAt: Date.now() },
       ],
     };
     lobbies.set(id, lobby);
@@ -298,7 +303,8 @@ io.on('connection', (socket) => {
       return;
     }
 
-    if (lobby.inGame) return sendError(socket, 'That banquet has already begun — you may still spectate.');
+    // A game already running? Let them in as a spectator — they stay outside
+    // GameState until the next game seats them (if a seat is free).
     if (lobby.players.length >= MAX_LOBBY_MEMBERS) return sendError(socket, 'That table is completely full.');
     if (lobby.password && lobby.password !== String(password ?? ''))
       return sendError(socket, 'Wrong password for that lobby.');
@@ -312,13 +318,11 @@ io.on('connection', (socket) => {
       ready: false,
       isAI: false,
       connected: true,
+      joinedAt: Date.now(),
     });
-    // Preserve the first-join timestamp for "longest connected" host transfer.
-    lobby.joinedAt = lobby.joinedAt || {};
-    if (!lobby.joinedAt[cid]) lobby.joinedAt[cid] = Date.now();
     socketIndex.set(socket.id, { lobbyId: lobby.id, clientId: cid });
     socket.join(room(lobby.id));
-    const spectating = lobby.players.length > lobby.maxPlayers;
+    const spectating = lobby.inGame || lobby.players.length > lobby.maxPlayers;
     console.log(`[banquet] ${playerName} joined ${lobby.id}${spectating ? ' (spectating)' : ''}`);
     broadcastLobby(lobby);
     io.to(room(lobby.id)).emit('lobby:chat', {
@@ -456,6 +460,19 @@ io.on('connection', (socket) => {
     // seat immediately — give them a grace period to reconnect with the same
     // clientId. An explicit `lobby:leave` (handled above) bypasses this.
     player.connected = false;
+
+    // If that seat was the HOST, promote a successor right away so the game
+    // never stalls: the new host's browser adopts the state it already holds
+    // as a guest and becomes authoritative. The old host keeps their seat
+    // during the grace window and returns as an ordinary player.
+    if (lobby.hostId === player.id) {
+      const next = promoteHost(lobby, player.id);
+      if (!next) {
+        removeLobby(lobby, 'The host left the banquet.');
+        return;
+      }
+    }
+
     broadcastLobby(lobby);
     const timer = setTimeout(() => finalizeRemoval(lobby, idx.clientId), RECONNECT_GRACE_MS);
     graceTimers.set(idx.clientId, timer);

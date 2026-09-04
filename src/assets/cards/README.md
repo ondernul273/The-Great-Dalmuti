@@ -1,35 +1,36 @@
 # Card artwork — drop-in guide
 
-Replace the deck's look by adding PNGs here. **No code changes are required.**
-If a card has no PNG, the game automatically draws it with the built-in
-renderer, so a partial set is always safe.
+The deck's look can be replaced **without touching any code**, and the choice is
+synced to everyone at the table via the in-game **Card Set** picker.
 
-## 1. Default deck
+## The sets you can choose from
 
-Drop files directly in this folder:
+| Set | Where it comes from | Notes |
+| --- | --- | --- |
+| **Default** | Built into the game | Always available. Uses the built-in renderer + bundled sprite artwork. Needs no files. |
+| Bundled custom sets | Sub-folders of this directory | One folder per set, e.g. `neon/`, `christmas/`. Discovered at build time. |
+| Runtime pack | `public/cards/manifest.json` | Optional. Swappable on a deployed server with **no rebuild**. |
+
+Loose PNGs placed directly in this folder root are **ignored on purpose** so the
+Default set can never be silently replaced.
+
+## Adding a bundled custom set
+
+Create a sub-folder and drop PNGs in it — nothing else to do:
 
 ```
 src/assets/cards/
-  1-dalmuti.png
-  2-archbishop.png
-  3-earl-marshal.png
-  4-baroness.png
-  5-abbess.png
-  6-knight.png
-  7-seamstress.png
-  8-mason.png
-  9-cook.png
-  10-shepherdess.png
-  11-stonecutter.png
-  12-peasant.png
-  13-jester.png
-  back.png
+  neon/
+    1-dalmuti.png
+    2-archbishop.png
+    …
+    13-jester.png
+    back.png
 ```
 
-Then rebuild (`npm run build`). Vite discovers the files automatically via
-`import.meta.glob`, so there is nothing to import or register.
+Then rebuild (`npm run build`). The set appears in the picker automatically.
 
-### Naming rules
+### File naming
 
 | File | Resolves to |
 | --- | --- |
@@ -37,49 +38,17 @@ Then rebuild (`npm run build`). Vite discovers the files automatically via
 | `13-jester.png`, `jester.png`, `joker.png`, `wild.png` | Jester (13) |
 | `back.png`, `card-back.png` | card back |
 
-Only the **leading number** matters for ranks — everything after it is free
-text, so `7-seamstress-v2.png` still resolves to rank 7. Files that match no
-rule (e.g. `faces.jpg`) are ignored.
+Only the **leading number** matters; the rest of the name is free text.
 
-## 2. Themes
+### Incomplete sets are fine
 
-A sub-folder is a theme:
+A set only needs the cards it changes. Any missing slot falls back to the
+Default renderer for that card, and the picker shows a `n/14 cards — gaps fall
+back` badge so players know what to expect.
 
-```
-src/assets/cards/
-  1-dalmuti.png          <- theme "default"
-  neon/
-    1-dalmuti.png        <- theme "neon"
-    back.png
-```
+## Runtime pack (no rebuild)
 
-Pick one at build time:
-
-```bash
-VITE_CARD_THEME=neon npm run build
-```
-
-…or at runtime in the browser console:
-
-```js
-localStorage.setItem('dalmuti.cardTheme', 'neon');
-location.reload();
-```
-
-A theme only needs the cards it changes. Missing cards fall back to the default
-theme, then to the built-in renderer.
-
-## 3. Swapping art with no rebuild (runtime pack)
-
-For changing artwork on an already-deployed server, put the PNGs in
-`public/cards/` next to a `manifest.json`:
-
-```
-public/cards/
-  manifest.json
-  1-dalmuti.png
-  back.png
-```
+Put PNGs in `public/cards/` next to a `manifest.json`:
 
 ```json
 {
@@ -88,40 +57,45 @@ public/cards/
 }
 ```
 
-Runtime art overrides bundled art. If `manifest.json` is absent the app makes
-one harmless failed request and keeps using the bundled deck.
+or an explicit map: `{ "cards": { "1": "1-dalmuti.png", "back": "back.png" } }`.
+If the manifest is missing, the app simply keeps using bundled art.
 
-> Note: files in `public/` are **not** inlined by `vite-plugin-singlefile`, so
-> this mode needs the `cards/` folder to be served alongside `index.html`.
-> The bundled option (1 & 2) keeps the single-file build fully self-contained.
+> `public/` files are **not** inlined by `vite-plugin-singlefile`, so this mode
+> needs the `cards/` folder served alongside `index.html`. Bundled sets keep the
+> single-file build fully self-contained.
 
-## 4. Recommended image dimensions
+## Recommended image dimensions
 
 | Property | Recommendation |
 | --- | --- |
-| Aspect ratio | **5 : 7** (0.714) — matches the layout exactly |
-| Size | **500 × 700 px** |
-| High-DPI option | 750 × 1050 px |
+| Aspect ratio | **5 : 7** (0.714) — matches the card box exactly |
+| Size | **500 × 700 px** (750 × 1050 for high-DPI) |
 | Format | PNG-24, or PNG-8 when the art allows |
 | Safe margin | keep detail ≥ 4 % from the edge (corners are rounded/clipped) |
 | Budget | ≤ 120 KB per card |
 
 The largest on-screen card is ~252 × 353 CSS px, so 500 × 700 covers 2× retina.
-Art is drawn with `object-fit: cover`, so any 5:7 image fills the card without
-distortion; other ratios are centre-cropped.
+Art is drawn with `object-fit: cover`; other ratios are centre-cropped.
+Bundled PNGs are base64-inlined (+33 %), so large sets bloat `index.html` —
+prefer the runtime pack for heavy artwork.
 
-**Why the size budget matters:** bundled PNGs are base64-inlined into
-`dist/index.html` (+33 % overhead). Fourteen 120 KB cards add roughly 2.2 MB to
-the download. If you need larger art, use the runtime pack in section 3.
+## Selection, persistence & sync
 
-## 5. Verifying
+* The picker (main menu → **Card Set**) lists **Default** first, then every
+  discovered set, each with a live five-card preview.
+* The choice is remembered per browser (`localStorage['dalmuti.cardTheme']`).
+* While online, the choice is stamped into the game state by the host and
+  broadcast, so **every player sees the same deck**.
+* `VITE_CARD_THEME=<set-id>` preselects a set at build time.
+
+## Verifying
 
 In the browser console:
 
 ```js
 __dalmutiCardArt()
-// { "1": "bundled:default", "2": "procedural (no PNG)", …, "back": "runtime" }
+// { "1": "set:neon", …, "back": "procedural (Default renderer)" }
 ```
 
-Broken or missing files are logged as `[CARDS] artwork failed to load…` and the
-affected card silently reverts to the built-in renderer.
+Broken or missing files log `[CARDS] artwork failed to load…` and the affected
+card silently reverts to the built-in renderer.

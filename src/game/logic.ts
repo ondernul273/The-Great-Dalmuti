@@ -142,16 +142,10 @@ export function drawForSeats(players: Player[]): { ordered: Player[]; draws: Sea
  * A fresh game: the players draw for seats, then the whole deck is dealt.
  * The table shows the 'seating' reveal first, then the 'dealing' animation,
  * and only then moves on to taxation.
- *
- * `opts.cardSet` — name of the PNG card set the host picked in the lobby.
- *   Defaults to "classic" (or whatever the bundle discovered as the default).
- * `opts.joinTimestamps` — clientId → first-connection timestamp.
- *   Pre-seeded for the host and any Direct-Connect guests already connected.
- *   Guests with no entry get timestamped when they first send a 'join' message.
  */
 export function initializeNewGame(
   players: Player[],
-  opts: { timerEnabled?: boolean; timerSeconds?: number; cardSet?: string; joinTimestamps?: Record<string, number> } = {}
+  opts: { timerEnabled?: boolean; timerSeconds?: number; cardSet?: string } = {}
 ): GameState {
   const { ordered, draws } = drawForSeats(players.map((p) => ({ ...p, hand: [] })));
   const dealt = dealHands(ordered);
@@ -176,33 +170,8 @@ export function initializeNewGame(
     afkCounts: {},
     passedIds: [],
     seatingDraw: draws,
-    cardSet: opts.cardSet ?? 'classic',
-    joinTimestamps: opts.joinTimestamps ?? {},
+    cardSet: opts.cardSet ?? 'default',
   };
-}
-
-/**
- * Pick the longest-connected non-AI, non-kicked player id from the game state.
- * Falls back to the first human player in seat order when no timestamps exist.
- * Used by host-transfer logic on both transports.
- */
-export function pickNextHost(state: GameState, excludeIds?: Set<string>): string | null {
-  const candidates = state.players.filter(
-    (p) =>
-      !p.id.startsWith('ai-') &&
-      !p.kicked &&
-      !p.dropped &&
-      (!excludeIds || !excludeIds.has(p.id))
-  );
-  if (candidates.length === 0) return null;
-
-  // Prefer explicit timestamps (set by the host when the player first joined).
-  const withTs = candidates
-    .filter((p) => state.joinTimestamps[p.id])
-    .sort((a, b) => state.joinTimestamps[a.id] - state.joinTimestamps[b.id]);
-  if (withTs.length > 0) return withTs[0].id;
-
-  return candidates[0].id;
 }
 
 /**

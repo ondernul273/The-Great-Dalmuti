@@ -30,7 +30,6 @@ import {
   DoorOpen,
   X,
   Eye,
-  Layers,
 } from 'lucide-react';
 
 interface GameTableProps {
@@ -39,6 +38,8 @@ interface GameTableProps {
   isHost: boolean;
   /** true when myPlayerId isn't seated in state.players — watch only, no actions. */
   isSpectator?: boolean;
+  /** Single-player: the next hand deals itself, so show "Preparing…" not "waiting". */
+  autoAdvance?: boolean;
   revolutionDeclined: boolean;
   chat: ChatMessage[];
   turnDeadline?: number | null;
@@ -80,6 +81,7 @@ export function GameTable(props: GameTableProps) {
     myPlayerId,
     isHost,
     isSpectator = false,
+    autoAdvance = false,
     revolutionDeclined,
     chat,
     turnDeadline,
@@ -386,6 +388,7 @@ export function GameTable(props: GameTableProps) {
         state={state}
         myPlayerId={myPlayerId}
         isHost={isHost}
+        autoAdvance={autoAdvance}
         onNextHand={onNextHand}
         onReturnToLobby={onReturnToLobby}
         onBackToLobby={onBackToLobby}
@@ -851,19 +854,18 @@ export function GameTable(props: GameTableProps) {
 
       {/* ---------------- footer: compact control bar + hand ---------------- */}
       <footer className="shrink-0 relative z-30 bg-black/55 backdrop-blur border-t-2 border-amber-400/30">
-        {/* Control bar — three zones, kept optically balanced in every phase:
-              [ Turn status ]   [ Actions ]   [ Card count ]
-            The side columns are equal-width (1fr) so the action group is
-            genuinely centred, no matter how long the status text runs or
-            whether buttons are present at all (seating / dealing / out). */}
+        {/* Three-zone control bar: [Turn status] · [Actions] · [Card count].
+            A 1fr/auto/1fr grid keeps the action group truly centred no matter
+            how long the status text is, and pins the card count to the right.
+            This is the divider between the table above and the hand below. */}
         <div
           className={cn(
-            'px-2.5 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1 border-b border-amber-400/20',
+            'px-2.5 grid grid-cols-[1fr_auto_1fr] items-center gap-x-2 gap-y-1 border-b border-amber-400/20',
             inTaxes && myTributeDue ? 'py-1.5' : 'py-1'
           )}
         >
-          {/* zone 1 — turn status, left */}
-          <div className="min-w-0 justify-self-start">
+          {/* LEFT — turn status, may wrap but never pushes the centre off-centre */}
+          <div className="min-w-0 justify-self-start text-left">
             <ActionBarStatus
               state={state}
               myPlayer={myPlayer}
@@ -876,8 +878,8 @@ export function GameTable(props: GameTableProps) {
             />
           </div>
 
-          {/* zone 2 — all turn actions, centred as a group */}
-          <div className="justify-self-center flex items-center gap-2 flex-wrap justify-center">
+          {/* CENTRE — every turn action lives here as a centred group */}
+          <div className="flex items-center gap-2 justify-self-center">
             {inTaxes && myTributeDue ? (
               <button
                 onClick={() => onTribute(selectedCards)}
@@ -935,14 +937,12 @@ export function GameTable(props: GameTableProps) {
             ) : null}
           </div>
 
-          {/* zone 3 — remaining card count, right */}
-          <div className="min-w-0 justify-self-end text-right">
+          {/* RIGHT — remaining card count, pinned to the right */}
+          <div className="justify-self-end text-right">
             <span
-              className="inline-flex items-center gap-1.5 font-serif text-amber-100/70 whitespace-nowrap"
+              className="font-serif text-amber-100/70 whitespace-nowrap"
               style={{ fontSize: 'var(--font-xs)' }}
-              title="Cards remaining in your hand"
             >
-              <Layers size="1em" className="opacity-70 shrink-0" aria-hidden />
               {myPlayer.hand.length} cards
             </span>
           </div>
@@ -1571,6 +1571,7 @@ function HandEndScreen({
   state,
   myPlayerId,
   isHost,
+  autoAdvance = false,
   onNextHand,
   onReturnToLobby,
   onBackToLobby,
@@ -1578,6 +1579,7 @@ function HandEndScreen({
   state: GameState;
   myPlayerId: string;
   isHost: boolean;
+  autoAdvance?: boolean;
   onNextHand: () => void;
   onReturnToLobby?: () => void;
   onBackToLobby?: () => void;
@@ -1656,12 +1658,17 @@ function HandEndScreen({
         <div className="flex flex-col gap-2">
           {isHost ? (
             <>
+              {autoAdvance && (
+                <p className="text-center text-amber-700 font-serif italic animate-pulse" style={{ fontSize: 'var(--font-xs)' }}>
+                  Preparing next hand…
+                </p>
+              )}
               <button
                 onClick={onNextHand}
                 className="w-full py-3 bg-gradient-to-r from-purple-700 to-purple-900 hover:from-purple-600 hover:to-purple-800 text-amber-100 font-serif font-bold rounded-lg shadow-lg border-2 border-amber-400/30 transition-transform hover:-translate-y-0.5"
                 style={{ fontSize: 'var(--font-base)' }}
               >
-                Start Next Game
+                {autoAdvance ? 'Deal Next Hand Now' : 'Start Next Game'}
               </button>
               {onReturnToLobby && (
                 <button

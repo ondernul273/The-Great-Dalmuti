@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo, Component } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, useReducer, Component } from 'react';
 import type { ReactNode } from 'react';
 import { Lobby } from './components/Lobby';
 import { GameTable } from './components/GameTable';
@@ -18,16 +18,17 @@ import {
   MIN_PLAYERS,
 } from './game/logic';
 import { countJesters } from './game/cards';
-import { aiDecide, aiSelectGreaterDalmutiTax, aiSelectLesserDalmutiTax } from './game/ai';
+import {
+  aiDecide,
+  aiSelectGreaterDalmutiTax,
+  aiSelectLesserDalmutiTax,
+  shouldCallRevolution,
+  type AIContext,
+} from './game/ai';
 import { useMultiplayer } from './hooks/useMultiplayer';
 import type { PeerMessage } from './hooks/useMultiplayer';
 import { useSocketLobby } from './net/useSocketLobby';
 import type { LobbyChatLine } from './net/types';
-import {
-  availableCardSets,
-  DEFAULT_CARD_SET,
-  setCurrentCardSet,
-} from './components/cardAssets';
 import {
   CLIENT_ID,
   clearSession,
@@ -38,6 +39,7 @@ import {
   saveSnapshot,
 } from './net/identity';
 import { recordHandOutcome } from './game/stats';
+import { getActiveSet, rememberSet, setThemeOverride, subscribeToCardArt } from './components/cardAssets';
 
 type GameMode =
   | 'none'
@@ -133,8 +135,6 @@ export default function App() {
   const [timerOn, setTimerOn] = useState(true);
   const [timerSecs, setTimerSecs] = useState(60);
   const [kickedInfo, setKickedInfo] = useState<{ kind: 'remove' | 'ai' } | null>(null);
-  // Card set chosen by the host in the lobby, broadcast via state.cardSet.
-  const [hostCardSet, setHostCardSet] = useState(DEFAULT_CARD_SET);
   const [resuming, setResuming] = useState(false);
   const [resumeNotice, setResumeNotice] = useState<string | null>(null);
   const aiCounterRef = useRef(0);
@@ -144,12 +144,12 @@ export default function App() {
   modeRef.current = mode;
   const stateRef = useRef<GameState | null>(null);
   stateRef.current = state;
+  const myNameRef = useRef(myName);
+  myNameRef.current = myName;
 
   /** Direct Connect only: peerId ⇄ clientId, built passively from every inbound message that carries one. */
   const peerToClientRef = useRef<Record<string, string>>({});
   const clientToPeerRef = useRef<Record<string, string>>({});
-
-  // attemptHostTakeover is defined later alongside connectionLostRef.current.
 
   /** Exactly-once chat: transport relays can deliver a message twice, so dedupe by id. */
   const pushChat = useCallback(
@@ -210,7 +210,7 @@ export default function App() {
     if (m === 'online-guest') {
       const h = firstConnectionId(peerRef.current?.connections ?? new Map());
       if (h) peerRef.current?.sendTo(h, { type, payload });
-    } else if (m === 'banquet-guest') {
+    } else if (m === 'banquet-guest' || m === 'banquet-lobby-guest') {
       sockRef.current?.sendGame('host', type, payload);
     }
   }, []);
@@ -225,6 +225,20 @@ export default function App() {
     [resolvePeerId]
   );
 
+  /** Broadcast to everyone in the current room, host or guest-side lobby alike. */
+  const netBroadcastRoom = useCallback((type: string, payload: unknown) => {
+    const m = modeRef.current;
+    if (m === 'online-host' || m === 'online-guest') peerRef.current?.broadcast({ type, payload });
+    else if (m.startsWith('banquet')) sockRef.current?.broadcastGame(type, payload);
+  }, []);
+
+  /* ------------------------- card set (table-wide) ------------------------- */
+
+  const applyCardSet = useCallback((set: string, persist: boolean) => {
+    setThemeOverride(set);
+    if (persist) rememberSet(set);
+  }, []);
+
   /* --------------------------- transports --------------------------- */
 
   const peerRef = useRef<ReturnType<typeof useMultiplayer> | null>(null);
@@ -234,6 +248,15 @@ export default function App() {
   const closedRef = useRef<(reason: string) => void>(() => {});
   const reconnectedRef = useRef<(clientId: string) => void>(() => {});
   const connectionLostRef = useRef<() => void>(() => {});
+  const hostChangedRef = useRef<(p: { newHostId: string; oldHostName: string; newHostName: string }) => void>(
+    () => {}
+  );
+  /** Last roster the host broadcast — join order, used to pick a DC successor. */
+  const lastRosterRef = useRef<RosterEntry[]>([]);
+  /** Notice a freshly-promoted host hands to every peer that (re)joins. */
+  const hostChangeNoticeRef = useRef<string | null>(null);
+  /** True once this session took over hosting, so we trust our own promotion. */
+  const promotedRef = useRef(false);
 
   const peer = useMultiplayer({
     onMessage: (m) => netMessageRef.current(m),
@@ -246,6 +269,7 @@ export default function App() {
     onLobbyChat: (l) => lobbyChatRef.current(l),
     onClosed: (reason) => closedRef.current(reason),
     onPlayerReconnected: (clientId) => reconnectedRef.current(clientId),
+    onHostChanged: (p) => hostChangedRef.current(p),
   });
   sockRef.current = sock;
 
@@ -263,6 +287,27 @@ export default function App() {
       });
     },
     [broadcastState]
+  );
+
+  /** Choose a card set for the whole table (host applies, guests propose). */
+  const handleCardSetChoice = useCallback(
+    (set: string) => {
+      applyCardSet(set, true);
+      const m = modeRef.current;
+      if (m === 'local-ai' || m === 'none') return;
+      if (isHostMode(m)) {
+        // In-game: stamp it into the authoritative state (broadcasts with it).
+        if (stateRef.current) {
+          hostReduce((prev) => (prev.cardSet === set ? prev : { ...prev, cardSet: set }));
+        } else {
+          netBroadcastRoom('card-set', { set });
+        }
+      } else {
+        // Guests propose; the host applies and re-broadcasts to everyone.
+        netSendToHost('set-card-set', { set });
+      }
+    },
+    [applyCardSet, hostReduce, netBroadcastRoom, netSendToHost]
   );
 
   /* --------------------- unified message router --------------------- */
@@ -333,8 +378,30 @@ export default function App() {
         return;
       }
 
-      if (msg.type === 'lobby' && m === 'online-guest') {
-        setLobbyRoster((msg.payload as { roster?: RosterEntry[] }).roster ?? []);
+      if (msg.type === 'lobby' && (m === 'online-guest' || m === 'online-host')) {
+        const r = (msg.payload as { roster?: RosterEntry[] }).roster ?? [];
+        if (m === 'online-guest') {
+          setLobbyRoster(r);
+          lastRosterRef.current = r; // join order = succession order if the host vanishes
+        }
+        return;
+      }
+
+      /* ---- card set sync: host applies + rebroadcasts, everyone applies ---- */
+      if (msg.type === 'set-card-set') {
+        const set = String((msg.payload as { set?: string }).set ?? 'default');
+        if (isHostMode(m) || m === 'banquet-lobby-host') {
+          applyCardSet(set, false);
+          if (stateRef.current) {
+            hostReduce((prev) => (prev.cardSet === set ? prev : { ...prev, cardSet: set }));
+          } else {
+            netSendToAllExcept(msg.from, 'card-set', { set });
+          }
+        }
+        return;
+      }
+      if (msg.type === 'card-set') {
+        applyCardSet(String((msg.payload as { set?: string }).set ?? 'default'), false);
         return;
       }
 
@@ -355,18 +422,15 @@ export default function App() {
           netSendToAllExcept(msg.from, 'chat', { name: 'Herald', text: `${rejoinName} reconnects to the table.`, system: true, id: cid2 });
           return;
         }
-
-        // First-join bookkeeping — stamp the client's timestamp once, for the
-        // host-transfer "longest connected" rule. Subsequent joins from the
-        // same client (reconnects) must not overwrite the original timestamp.
-        if (cid && !stateRef.current?.joinTimestamps[cid]) {
-          const stamp = Date.now();
-          hostReduce((prev) => ({
-            ...prev,
-            joinTimestamps: { ...prev.joinTimestamps, [cid]: stamp },
-          }));
-        }
         setPeerNames((prev) => ({ ...prev, [msg.from]: name }));
+        // A promoted host hands the succession notice to peers as they (re)join.
+        if (hostChangeNoticeRef.current) {
+          const notice = hostChangeNoticeRef.current;
+          peerRef.current?.sendTo(msg.from, {
+            type: 'chat',
+            payload: { name: 'Herald', text: notice, system: true, id: nextChatId() },
+          });
+        }
         return;
       }
 
@@ -463,53 +527,76 @@ export default function App() {
     }, delay);
   }, [peer, handleBackToLobby]);
 
-  /** Direct Connect host transfer: pick the longest-connected guest when the
-   *  host disappears. Only triggers for guests; the new host re-registers the
-   *  SAME room code so other guests' reconnect flow still works. */
-  const attemptHostTakeover = useCallback(() => {
-    if (modeRef.current !== 'online-guest') return;
-    const session = loadSession();
-    if (!session || session.transport !== 'direct' || !session.code) return;
-    const current = stateRef.current;
-    if (!current) return;
-
-    const myTs = current.joinTimestamps[CLIENT_ID];
-    const someoneElseIsOlder = Object.entries(current.joinTimestamps).some(
-      ([clientId, ts]) =>
-        clientId !== CLIENT_ID && typeof ts === 'number' && myTs !== undefined && ts < myTs
-    );
-    if (someoneElseIsOlder) {
-      console.log('[MP] another guest has a longer tenure — deferring host takeover');
-      return;
-    }
-    console.log('[MP] claiming host takeover — re-registering saved code', session.code);
-    setResumeNotice('Taking over as host…');
-    peer
-      .initializeHostWithCode(session.code)
-      .then((code) => {
-        console.log('[MP] host takeover succeeded — code', code);
-        if (current) broadcastState(current);
-        setMode('online-host');
-        modeRef.current = 'online-host';
-        saveSession({ transport: 'direct', role: 'host', code, name: myName.trim() || 'Host' });
-      })
-      .catch((e) => {
-        console.error('[MP] host takeover failed — code likely still held by the old host', e);
-      });
-  }, [peer, myName, broadcastState]);
+  /**
+   * Direct Connect host succession. The roster the host broadcasts is in join
+   * order, so every guest independently computes the same successor: the
+   * longest-connected human after the host. That guest re-registers the room
+   * code and adopts the state it already holds as authoritative; everyone else
+   * retries joining the (now re-registered) room.
+   */
+  const promoteSelfToHostDC = useCallback(
+    (code: string, oldHostName: string) => {
+      const myNameNow = myNameRef.current;
+      promotedRef.current = true;
+      console.log('[MP] Direct Connect succession — this client becomes host');
+      const notice = `${oldHostName} left the game. ${myNameNow} is now the host.`;
+      hostChangeNoticeRef.current = notice;
+      pushChat({ name: 'Herald', text: notice, system: true });
+      modeRef.current = 'online-host';
+      setMode('online-host');
+      saveSession({ transport: 'direct', role: 'host', code, name: myNameNow });
+      peer
+        .initializeHostWithCode(code)
+        .then(() => {
+          if (stateRef.current) broadcastState(stateRef.current);
+          netBroadcastRoom('chat', { name: 'Herald', text: notice, system: true, id: nextChatId() });
+        })
+        .catch((e: Error) => {
+          console.error('[MP] succession failed to re-register room', e);
+          setLobbyError(`Could not take over hosting: ${e.message}`);
+        });
+    },
+    [peer, broadcastState, netBroadcastRoom, pushChat]
+  );
 
   connectionLostRef.current = () => {
-    if (modeRef.current === 'online-guest' && stateRef.current) {
-      console.log('[MP] lost connection to host — attempting host takeover first…');
-      attemptHostTakeover();
-      // If takeover fails or this guest wasn't eligible, fall through to a
-      // normal guest reconnect (which may find the new host).
-      setTimeout(() => {
-        if (modeRef.current === 'online-guest') {
-          console.log('[MP] host takeover did not claim — trying as a guest');
-          attemptGuestReconnect();
-        }
-      }, 1500);
+    const m = modeRef.current;
+    if (m !== 'online-guest') return;
+    const session = loadSession();
+    const roster = lastRosterRef.current;
+    const humans = roster.filter((r) => r.kind !== 'ai');
+    const successor = humans[1]; // humans[0] is the (lost) host
+    console.log('[MP] lost connection to host — successor candidate:', successor?.id);
+    if (successor && successor.id === CLIENT_ID && session?.code) {
+      promoteSelfToHostDC(session.code, humans[0]?.name ?? 'The host');
+      return;
+    }
+    if (stateRef.current || session?.code) {
+      console.log('[MP] attempting to reconnect to the (possibly new) host…');
+      attemptGuestReconnect();
+    }
+  };
+
+  /** Banquet Browser: the relay promoted a successor; take over if it's us. */
+  hostChangedRef.current = ({ newHostId, oldHostName, newHostName }) => {
+    if (newHostId !== CLIENT_ID) return; // guests learn via the Herald chat line
+    const inGame = !!stateRef.current;
+    promotedRef.current = true;
+    console.log('[MP] Banquet succession — this client becomes host');
+    modeRef.current = inGame ? 'banquet-host' : 'banquet-lobby-host';
+    setMode(modeRef.current);
+    saveSession({
+      transport: 'banquet',
+      role: 'host',
+      lobbyId: sockRef.current?.lobby?.id,
+      name: myNameRef.current,
+    });
+    if (inGame) {
+      const notice = `${oldHostName} left the game. ${newHostName} is now the host.`;
+      pushChat({ name: 'Herald', text: notice, system: true });
+      netBroadcastRoom('chat', { name: 'Herald', text: notice, system: true, id: nextChatId() });
+      // Re-assert authority: guests already hold our last broadcast state.
+      if (stateRef.current) broadcastState(stateRef.current);
     }
   };
 
@@ -529,7 +616,11 @@ export default function App() {
           isOut: false,
         });
       }
-      const next = initializeNewGame(players, { timerEnabled: timerOn, timerSeconds: timerSecs });
+      const next = initializeNewGame(players, {
+        timerEnabled: timerOn,
+        timerSeconds: timerSecs,
+        cardSet: getActiveSet(),
+      });
       setDeclinedRevolution(-1);
       setChat([]);
       setKickedInfo(null);
@@ -564,22 +655,14 @@ export default function App() {
       isOut: false,
     }));
     const { active, spectators } = splitActiveSpectators([hostPlayer, ...guests, ...ais], MAX_SEATS);
-
-    // Join timestamps: host is first, guests get the timestamp from when they
-    // joined the PeerJS room. Missing timestamps default to now() — the
-    // pickNextHost helper uses explicit timestamps when available.
-    const joinTimestamps: Record<string, number> = { [CLIENT_ID]: Date.now() };
-
     const next = initializeNewGame(active, {
       timerEnabled: timerOn,
       timerSeconds: timerSecs,
-      cardSet: hostCardSet,
-      joinTimestamps,
+      cardSet: getActiveSet(),
     });
     setDeclinedRevolution(-1);
     setChat([]);
     setKickedInfo(null);
-    setCurrentCardSet(hostCardSet);
     pushChat({
       name: 'Herald',
       text:
@@ -592,7 +675,7 @@ export default function App() {
     modeRef.current = 'online-host';
     setMode('online-host');
     broadcastState(next);
-  }, [peer.connectedPeers, peer.roomCode, myName, peerNames, aiSeats, broadcastState, pushChat, timerOn, timerSecs, hostCardSet]);
+  }, [peer.connectedPeers, peer.roomCode, myName, peerNames, aiSeats, broadcastState, pushChat, timerOn, timerSecs]);
 
   /* --------------------- banquet (socket) session --------------------- */
 
@@ -608,7 +691,11 @@ export default function App() {
     }));
     const { active, spectators } = splitActiveSpectators(players, MAX_SEATS);
     sock.startGame();
-    const next = initializeNewGame(active, { timerEnabled: timerOn, timerSeconds: timerSecs });
+    const next = initializeNewGame(active, {
+      timerEnabled: timerOn,
+      timerSeconds: timerSecs,
+      cardSet: getActiveSet(),
+    });
     setDeclinedRevolution(-1);
     setChat([]);
     setKickedInfo(null);
@@ -719,7 +806,9 @@ export default function App() {
 
     const t = state.pendingTaxes;
 
-    const aiRevolter = state.players.find((p) => isAI(p.id) && countJesters(p.hand) >= 2);
+    const aiRevolter = state.players.find(
+      (p) => isAI(p.id) && countJesters(p.hand) >= 2 && shouldCallRevolution(p.hand, p.role)
+    );
     if (aiRevolter) {
       const timer = setTimeout(() => {
         pushChat({ name: aiRevolter.name, text: AI_REVOLT_LINES[Math.floor(Math.random() * AI_REVOLT_LINES.length)] });
@@ -763,19 +852,32 @@ export default function App() {
   }, [state, mode, declinedRevolution, pushChat, hostReduce]);
 
   /* -------------------------- AI: playing turns -------------------------- */
+  /* Build the strategic context the AI evaluates against (rank, hand size,
+     players left, whether it leads, and how far the trick has come). */
+  const aiContextFor = (state: GameState, playerId: string): AIContext => {
+    const p = state.players.find((pl) => pl.id === playerId);
+    return {
+      role: p?.role,
+      handSize: p?.hand.length ?? 0,
+      playersLeft: state.players.filter((pl) => !pl.isOut && pl.hand.length > 0).length,
+      isLeader: state.lastValidPlay === null,
+      trickAge: state.currentTrick.length,
+    };
+  };
+
   useEffect(() => {
     if ((mode !== 'local-ai' && mode !== 'online-host' && mode !== 'banquet-host') || !state || state.phase !== 'playing') return;
     const current = state.players[state.currentPlayerIndex];
     if (!current || !isAI(current.id) || current.isOut) return;
 
     const timer = setTimeout(() => {
-      const decision = aiDecide(current.hand, state.lastValidPlay);
+      const decision = aiDecide(current.hand, state.lastValidPlay, aiContextFor(state, current.id));
       const goesOut =
         decision.action === 'play' && !!decision.cards && decision.cards.length === current.hand.length;
       hostReduce((prev) => {
         const p = prev.players[prev.currentPlayerIndex];
         if (!p || p.id !== current.id || p.isOut) return prev;
-        const d = aiDecide(p.hand, prev.lastValidPlay);
+        const d = aiDecide(p.hand, prev.lastValidPlay, aiContextFor(prev, p.id));
         return d.action === 'play' && d.cards ? applyPlay(prev, p.id, d.cards) : applyPass(prev, p.id);
       });
       if (goesOut) {
@@ -844,10 +946,21 @@ export default function App() {
   );
 
   const handleNextHand = useCallback(() => {
-    if (!isHostMode(modeRef.current)) return;
+    // The human IS the host in single-player, so they (and the auto-advance)
+    // may deal the next hand there too.
+    if (!isHostMode(modeRef.current) && modeRef.current !== 'local-ai') return;
     setDeclinedRevolution(-1);
     hostReduce((prev) => reseatForNextHand(prev));
   }, [hostReduce]);
+
+  /* Single-player: hands flow on their own. Show the results for a moment,
+     then deal the next hand automatically — no "waiting for the host". */
+  useEffect(() => {
+    if (mode !== 'local-ai' || state?.phase !== 'hand-end') return;
+    const t = setTimeout(() => handleNextHand(), 3500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, state?.phase, state?.handNumber, handleNextHand]);
 
   const handleSendChat = useCallback(
     (text: string) => {
@@ -1030,10 +1143,7 @@ export default function App() {
     clearSnapshot();
   }, [sock]);
 
-  // Host status is derived from the authoritative lobby state, not from how
-  // this browser originally joined. A host transfer (Banquet Browser) updates
-  // lobby.hostId here and the UI reflects it immediately.
-  const banquetIsHost = !!sock.lobby && sock.lobby.hostId === sock.myId;
+  const banquetIsHost = mode === 'banquet-lobby-host';
   const canStartBanquet =
     !!sock.lobby &&
     sock.lobby.players.length >= MIN_PLAYERS &&
@@ -1086,7 +1196,25 @@ export default function App() {
             // first (before we finish here) is immediately brought in sync.
             if (snapshot) broadcastState(snapshot);
           })
-          .catch(() => {
+          .catch((e: Error) => {
+            // Someone else already took the room over (host transfer happened
+            // while we were away): fall back to rejoining as their guest.
+            if (/taken|unavailable-id/i.test(e.message)) {
+              peer
+                .joinGame(session.code!, session.name)
+                .then(() => {
+                  clearTimeout(timeout);
+                  modeRef.current = 'online-guest';
+                  setMode('online-guest');
+                  setResuming(false);
+                  setResumeNotice(null);
+                })
+                .catch(() => {
+                  clearTimeout(timeout);
+                  giveUp('Could not re-open your hosted room. It may have expired.');
+                });
+              return;
+            }
             clearTimeout(timeout);
             giveUp('Could not re-open your hosted room. It may have expired.');
           });
@@ -1154,10 +1282,29 @@ export default function App() {
     if (state && inGameMode(mode) && mode !== 'local-ai') {
       saveSnapshot(state);
     }
-    // Sync card set whenever authoritative state says it changed. The host
-    // already picks it before starting; guests get it via state.cardSet.
-    if (state?.cardSet) setCurrentCardSet(state.cardSet);
   }, [state, mode]);
+
+  /* The table's card set travels inside GameState — adopt whatever it says. */
+  useEffect(() => {
+    if (state?.cardSet) applyCardSet(state.cardSet, false);
+  }, [state?.cardSet, applyCardSet]);
+
+  /* If the relay says somebody else holds the host seat (e.g. we resumed after
+     a transfer while away), step down to guest instead of split-braining.
+     Skipped right after our own promotion, before the relay's lobby:update
+     confirming it has arrived. */
+  useEffect(() => {
+    if (mode !== 'banquet-host' || !sock.lobby || promotedRef.current) return;
+    if (sock.lobby.hostId !== CLIENT_ID) {
+      console.log('[MP] relay reports another host — stepping down to guest');
+      modeRef.current = 'banquet-guest';
+      setMode('banquet-guest');
+    }
+  }, [mode, sock.lobby]);
+
+  /* Re-render when the artwork registry changes (runtime pack arriving, etc). */
+  const [, bumpArtVersion] = useReducer((x: number) => x + 1, 0);
+  useEffect(() => subscribeToCardArt(bumpArtVersion), [bumpArtVersion]);
 
   if (mode === 'none' || !state || inBanquetLobby(mode)) {
     return (
@@ -1185,16 +1332,13 @@ export default function App() {
           onAddAI={addAI}
           onRemoveAI={removeAI}
           canAddAI={peer.connectedPeers.length + aiSeats.length + 1 < MAX_SEATS}
-        maxSeats={MAX_SEATS}
-        minSeats={MIN_PLAYERS}
-        cardSets={availableCardSets()}
-        cardSet={hostCardSet}
-        onCardSetChange={setHostCardSet}
-        timerEnabled={timerOn}
-        onToggleTimer={setTimerOn}
-        timerSeconds={timerSecs}
-        onTimerSeconds={setTimerSecs}
-        error={lobbyError ?? peer.errorMessage}
+          maxSeats={MAX_SEATS}
+          minSeats={MIN_PLAYERS}
+          timerEnabled={timerOn}
+          onToggleTimer={setTimerOn}
+          timerSeconds={timerSecs}
+          onTimerSeconds={setTimerSecs}
+          error={lobbyError ?? peer.errorMessage}
           diagnostics={peer.diagnostics}
           networkTest={peer.networkTest}
           testingNetwork={peer.testingNetwork}
@@ -1227,12 +1371,14 @@ export default function App() {
             sock.addAI(name);
           }}
           onBanquetRemoveAI={sock.removeAI}
+          currentCardSet={getActiveSet()}
+          onCardSet={handleCardSetChoice}
         />
       </>
     );
   }
 
-  const isHost = isHostMode(mode);
+  const isHost = isHostMode(mode) || mode === 'local-ai';
   const myPlayerRecord = state.players.find((p) => p.id === myId);
   const isSpectator = !myPlayerRecord;
 
@@ -1251,8 +1397,9 @@ export default function App() {
             : null
         }
         onContinueSeating={isHost ? handleContinueSeating : undefined}
-        onReturnToLobby={isHost ? handleReturnToLobby : undefined}
+        onReturnToLobby={isHostMode(mode) ? handleReturnToLobby : undefined}
         onKick={isHost ? handleKick : undefined}
+        autoAdvance={mode === 'local-ai'}
         onLeaveTable={handleLeaveTable}
         onScheduleLeave={!isHost ? handleScheduleLeave : undefined}
         kickedNotice={kickedInfo}

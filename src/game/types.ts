@@ -106,10 +106,6 @@ export interface GameState {
   passedIds: string[];
   /** the opening draw for seats, in seat order (Greater Dalmuti first); null after hand 1 */
   seatingDraw: SeatDraw[] | null;
-  /** name of the card set in use — travels with the game state so guests stay in sync */
-  cardSet: string;
-  /** clientId → epoch-ms of first connection. Lowest value = "longest connected"; used for host transfer. */
-  joinTimestamps: Record<string, number>;
   phase: Phase;
   players: Player[];
   deck: Card[];
@@ -125,6 +121,8 @@ export interface GameState {
   handResults: HandResult[];
   /** running total per player id */
   totalScores: Record<string, number>;
+  /** card artwork set in use at this table, synced to every player */
+  cardSet: string;
 }
 
 export interface NetworkMessage {

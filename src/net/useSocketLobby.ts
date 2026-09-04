@@ -43,6 +43,8 @@ interface Options {
   onStarted?: () => void;
   /** A previously-known player reconnected mid-game; the host should resend state. */
   onPlayerReconnected?: (clientId: string) => void;
+  /** The relay promoted a new host (old host left). Payload names both parties. */
+  onHostChanged?: (p: { newHostId: string; oldHostName: string; newHostName: string }) => void;
 }
 
 const CONNECT_TIMEOUT_MS = 9000;
@@ -66,6 +68,7 @@ export function useSocketLobby({
   onClosed,
   onStarted,
   onPlayerReconnected,
+  onHostChanged,
 }: Options) {
   const socketRef = useRef<Socket | null>(null);
   const [serverStatus, setServerStatus] = useState<ServerStatus>('offline');
@@ -78,8 +81,22 @@ export function useSocketLobby({
   const [listing, setListing] = useState(false);
   const [stats, setStats] = useState<LobbyStats>({ activeLobbies: 0, playersOnline: 0 });
 
-  const cbRef = useRef({ onGameMessage, onLobbyChat, onClosed, onStarted, onPlayerReconnected });
-  cbRef.current = { onGameMessage, onLobbyChat, onClosed, onStarted, onPlayerReconnected };
+  const cbRef = useRef({
+    onGameMessage,
+    onLobbyChat,
+    onClosed,
+    onStarted,
+    onPlayerReconnected,
+    onHostChanged,
+  });
+  cbRef.current = {
+    onGameMessage,
+    onLobbyChat,
+    onClosed,
+    onStarted,
+    onPlayerReconnected,
+    onHostChanged,
+  };
 
   /* ------------------------- socket lifecycle ------------------------- */
 
@@ -116,6 +133,13 @@ export function useSocketLobby({
     socket.on('lobby:playerReconnected', (p: { clientId: string }) => {
       if (p?.clientId) cbRef.current.onPlayerReconnected?.(p.clientId);
     });
+    socket.on(
+      'lobby:hostChanged',
+      (p: { newHostId: string; oldHostName: string; newHostName: string }) => {
+        log('lobby:hostChanged →', p?.newHostName);
+        if (p?.newHostId) cbRef.current.onHostChanged?.(p);
+      }
+    );
     socket.on('lobby:chat', (p: { name: string; text: string; system?: boolean }) => {
       cbRef.current.onLobbyChat({ name: p.name, text: p.text, system: p.system });
     });

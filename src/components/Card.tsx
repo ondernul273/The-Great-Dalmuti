@@ -1,9 +1,13 @@
+import { useSyncExternalStore } from 'react';
 import type { Card as CardType } from '../game/types';
 import { CARD_INFO } from '../game/cards';
 import { cn } from '../utils/cn';
 import {
+  cardArtUrl,
+  cardArtVersion,
   markArtBroken,
-  useCardArt,
+  subscribeToCardArt,
+  type CardSlot,
 } from './cardAssets';
 import facesSheet from '../assets/cards/faces.jpg';
 import extrasSheet from '../assets/cards/extras.jpg';
@@ -67,6 +71,15 @@ const SIZE_VARS = {
   lg: { w: 'var(--card-w-lg)', h: 'var(--card-h-lg)', corner: 'var(--font-sm)', title: 'var(--font-xs)', plate: 'var(--font-xs)' },
   md: { w: 'var(--card-w)', h: 'var(--card-h)', corner: 'var(--font-xs)', title: 'var(--font-tiny)', plate: 'var(--font-tiny)' },
 } as const;
+
+/**
+ * Subscribes to the artwork registry so cards re-render when a runtime pack
+ * arrives or a PNG turns out to be broken.
+ */
+function useCardArt(slot: CardSlot): string | null {
+  useSyncExternalStore(subscribeToCardArt, cardArtVersion, cardArtVersion);
+  return cardArtUrl(slot);
+}
 
 /* ------------------------------------------------------------------ */
 /*  Card back                                                          */
