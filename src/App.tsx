@@ -42,6 +42,10 @@ import { recordHandOutcome } from './game/stats';
 import { getActiveSet, rememberSet, setThemeOverride, subscribeToCardArt } from './components/cardAssets';
 import { TAUNTS } from './taunts';
 import { playTaunt } from './playTaunt.ts';
+import {
+  playMenuMusic,
+  playGameMusic,
+} from './audio.ts';
 type GameMode =
   | 'none'
   | 'local-ai'
@@ -1402,6 +1406,21 @@ if (p.taunt && TAUNTS[p.taunt]) {
   /* Re-render when the artwork registry changes (runtime pack arriving, etc). */
   const [, bumpArtVersion] = useReducer((x: number) => x + 1, 0);
   useEffect(() => subscribeToCardArt(bumpArtVersion), [bumpArtVersion]);
+
+useEffect(() => {
+  const inMenu =
+    mode === 'none' ||
+    mode === 'online-host' ||
+    mode === 'online-guest' ||
+    mode === 'banquet-lobby-host' ||
+    mode === 'banquet-lobby-guest';
+
+  if (inMenu) {
+    playMenuMusic();
+  } else if (state) {
+    playGameMusic();
+  }
+}, [mode, state]);
 
   if (mode === 'none' || !state || inBanquetLobby(mode)) {
     return (
