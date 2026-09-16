@@ -377,14 +377,18 @@ io.on('connection', (socket) => {
   broadcastLobby(lobby);
 });
   /* ------------------------------- chat ------------------------------ */
-  socket.on('lobby:chat', ({ text } = {}) => {
+  socket.on('lobby:chat', ({ text, taunt } = {}) => {
     const lobby = lobbyOfSocket(socket);
     if (!lobby) return;
     const p = lobby.players.find((x) => x.socketId === socket.id);
     const clean = String(text ?? '').slice(0, 200);
     if (!clean) return;
-    io.to(room(lobby.id)).emit('lobby:chat', { name: p?.name ?? 'Guest', text: clean });
+    io.to(room(lobby.id)).emit('lobby:chat', {
+  name: p.name,
+  text,
+  taunt
   });
+});
 
   /* ---------------------------- AI seats ----------------------------- */
   socket.on('lobby:addai', ({ name } = {}) => {
