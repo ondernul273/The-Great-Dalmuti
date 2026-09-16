@@ -1,0 +1,23 @@
+export const TAUNTS: Record<string, string> = {
+  '1': 'Yes.',
+  '2': 'No.',
+  '3': 'Good luck.',
+  '4': 'Well played.',
+  '5': 'Thank you.',
+  '6': 'Oops.',
+  '7': 'Ahh!',
+  '8': 'Your attempts are futile.',
+  '9': '*Group cheer*',
+  '10': 'Bold move.',
+  '11': 'Haha!',
+  '12': 'The banquet awaits!',
+  '13': "I don't think so.",
+  '14': 'Start the game already!',
+  '15': "Who's the man?",
+  '16': 'Revolution!',
+  '17': 'It is good to be the king.',
+  '18': 'You call that strategy?',
+  '19': 'We will NOT tolerate this behavior.',
+  '20': 'I just got some... satisfaction!',
+  '30': 'WOLOLO!'
+};

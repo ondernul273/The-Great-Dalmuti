@@ -9,6 +9,8 @@ import type {
   ServerStatus,
 } from './types';
 import { CLIENT_ID } from './identity';
+import { TAUNTS } from '../taunts';
+import { playTaunt } from '../playTaunt';
 
 /**
  * Transport #2 — "Banquet Browser": a Socket.IO relay server with public
@@ -266,8 +268,21 @@ export function useSocketLobby({
   }, []);
 
   const sendChat = useCallback((text: string) => {
-    socketRef.current?.emit('lobby:chat', { text });
-  }, []);
+  const trimmed = text.trim();
+
+  const displayText = TAUNTS[trimmed]
+    ? `[${trimmed}] ${TAUNTS[trimmed]}`
+    : text;
+
+  socketRef.current?.emit('lobby:chat', {
+    text: displayText,
+    taunt: trimmed,
+  });
+
+  if (TAUNTS[trimmed]) {
+    playTaunt(trimmed);
+  }
+}, []);
 
 
   
