@@ -142,9 +142,24 @@ export function useSocketLobby({
         if (p?.newHostId) cbRef.current.onHostChanged?.(p);
       }
     );
-    socket.on('lobby:chat', (p: { name: string; text: string; system?: boolean }) => {
-      cbRef.current.onLobbyChat({ name: p.name, text: p.text, system: p.system });
-    });
+    socket.on('lobby:chat', (p: {
+  name: string;
+  text: string;
+  taunt?: string;
+  system?: boolean;
+}) => {
+
+  if (p.taunt && TAUNTS[p.taunt]) {
+    playTaunt(p.taunt);
+  }
+
+  cbRef.current.onLobbyChat({
+    name: p.name,
+    text: p.text,
+    system: p.system
+  });
+});
+``
     socket.on('lobby:started', () => {
       log('lobby:started');
       cbRef.current.onStarted?.();
