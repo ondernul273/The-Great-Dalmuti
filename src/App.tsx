@@ -139,7 +139,7 @@ export default function App() {
   const [resumeNotice, setResumeNotice] = useState<string | null>(null);
   const aiCounterRef = useRef(0);
   const seenChatRef = useRef<Set<string>>(new Set());
-
+  const renameTimeoutRef = useRef<number | null>(null);
   const modeRef = useRef<GameMode>('none');
   modeRef.current = mode;
   const stateRef = useRef<GameState | null>(null);
@@ -275,11 +275,15 @@ export default function App() {
 
   const handleNameChange = useCallback(
   (name: string) => {
-    
-
     setMyName(name);
 
-    sock.renamePlayer(name);
+    if (renameTimeoutRef.current) {
+      clearTimeout(renameTimeoutRef.current);
+    }
+
+    renameTimeoutRef.current = window.setTimeout(() => {
+      sock.renamePlayer(name);
+    }, 1000);
   },
   [sock]
 );
