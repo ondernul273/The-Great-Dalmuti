@@ -75,6 +75,39 @@ const AI_REVOLT_LINES = [
   'I hold both Jesters — down with taxes!',
 ];
 
+const TAUNTS: Record<string, string> = {
+  '1': 'Yes.',
+  '2': 'No.',
+  '3': 'Good luck.',
+  '4': 'Well played.',
+  '5': 'Thank you.',
+  '6': 'Oops.',
+  '7': 'Ahh!',
+  '8': 'Your attempts are futile.',
+  '9': '*Group cheer*',
+  '10': 'Bold move.',
+  '11': 'Haha!',
+  '12': 'The banquet awaits!',
+  '13': "I don't think so.",
+  '14': 'Start the game already!',
+  '15': "Who's the man?",
+  '16': 'Revolution!',
+  '17': 'It is good to be the king.',
+  '18': 'You call that strategy?',
+  '19': 'We will NOT tolerate this behavior.',
+  '20': 'I just got some... satisfaction!',
+
+  '30': 'WOLOLO!'
+};
+
+function playTaunt(code: string) {
+  const audio = new Audio(`/taunts/${code}.mp3`);
+
+  audio.play().catch(() => {
+  console.warn('[TAUNT] could not play', code);
+});
+}
+
 let chatIdCounter = 0;
 function nextChatId() {
   chatIdCounter += 1;
@@ -361,7 +394,16 @@ export default function App() {
       }
 
       if (msg.type === 'chat') {
-        const p = msg.payload as { name: string; text: string; system?: boolean; id?: string };
+        const p = msg.payload as {
+name: string;
+text: string;
+taunt?: string;
+system?: boolean;
+id?: string;
+};
+if (p.taunt && TAUNTS[p.taunt]) {
+  playTaunt(p.taunt);
+}
         console.log('[CHAT] received', p.id ?? '(no id)', 'mode:', m, 'from:', msg.from);
         if (isHostMode(m)) {
           const withId = { ...p, id: p.id ?? nextChatId() };
@@ -1021,16 +1063,45 @@ export default function App() {
   }, [mode, state?.phase, state?.handNumber, handleNextHand]);
 
   const handleSendChat = useCallback(
-    (text: string) => {
-      const name = myName.trim() || 'Player';
-      const id = nextChatId();
-      console.log('[CHAT] sent', id, name, ':', text);
-      pushChat({ name, text, mine: true, id });
-      if (isHostMode(modeRef.current)) netBroadcast('chat', { name, text, id });
-      else if (isGuestMode(modeRef.current)) netSendToHost('chat', { name, text, id });
-    },
-    [myName, pushChat, netBroadcast, netSendToHost]
-  );
+  (text: string) => {
+    const trimmed = text.trim();
+
+    const displayText = TAUNTS[trimmed]
+      ? `[${trimmed}] ${TAUNTS[trimmed]}`
+      : text;
+
+    const name = myName.trim() || 'Player';
+    const id = nextChatId();
+
+    pushChat({
+      name,
+      text: displayText,
+      mine: true,
+      id,
+    });
+
+    if (TAUNTS[trimmed]) {
+      playTaunt(trimmed);
+    }
+
+    if (isHostMode(modeRef.current)) {
+      netBroadcast('chat', {
+        name,
+        text: displayText,
+        taunt: trimmed,
+        id,
+      });
+    } else if (isGuestMode(modeRef.current)) {
+      netSendToHost('chat', {
+        name,
+        text: displayText,
+        taunt: trimmed,
+        id,
+      });
+    }
+  },
+  [myName, pushChat, netBroadcast, netSendToHost]
+);
 
   /* ---------------------- leave-after-round scheduling ---------------------- */
 
