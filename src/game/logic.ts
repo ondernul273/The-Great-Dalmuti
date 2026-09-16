@@ -170,6 +170,7 @@ export function applyKick(state: GameState, playerId: string, kind: 'remove' | '
   target.kicked = true;
 
   if (kind === 'ai') {
+    target.kicked = false;
     const newId = `ai-kick-${Math.random().toString(36).slice(2, 7)}`;
     target.id = newId;
     target.name = aiName ?? 'Courtier';
@@ -184,6 +185,7 @@ export function applyKick(state: GameState, playerId: string, kind: 'remove' | '
       s.leaderIndex = idx;
     }
   } else {
+    target.kicked = true;
     target.dropped = true;
     target.isOut = true;
     target.hand = [];
