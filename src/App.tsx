@@ -892,16 +892,23 @@ export default function App() {
   useEffect(() => {
     if (isGuestMode(mode) || inBanquetLobby(mode) || mode === 'none') return;
     if (!state || state.phase !== 'playing' || !state.timerEnabled) return;
-    const cur = state.players[state.currentPlayerIndex];
+
+    // Identify the current player as the timer fires — handles AI replacement
+    // where the seat ID changed but the index didn't.
+    const curIdx = state.currentPlayerIndex;
+    const cur = state.players[curIdx];
     if (!cur || cur.isOut) return;
-    const started = state.turnStartedAt;
-    const delay = Math.max(0, started + state.timerSeconds * 1000 - Date.now());
+
+    const deadline = state.turnStartedAt + state.timerSeconds * 1000;
+    const delay = Math.max(0, deadline - Date.now());
+
     const t = setTimeout(() => {
       hostReduce((prev) => {
-        if (prev.phase !== 'playing' || prev.turnStartedAt !== started) return prev;
-        const p = prev.players[prev.currentPlayerIndex];
-        if (!p || p.isOut) return prev;
-        return applyPass(prev, p.id, { timedOut: true });
+        // Stale guard: if the turn has moved since we set this timeout,
+        // either the player acted or someone else took over — do nothing.
+        const nowCur = prev.players[prev.currentPlayerIndex];
+        if (!nowCur || nowCur.isOut || prev.phase !== 'playing') return prev;
+        return applyPass(prev, nowCur.id, { timedOut: true });
       });
     }, delay);
     return () => clearTimeout(t);
@@ -952,6 +959,42 @@ export default function App() {
     setDeclinedRevolution(-1);
     hostReduce((prev) => reseatForNextHand(prev));
   }, [hostReduce]);
+
+  /* --------------- safety net: detect taxation stuck state ------------------- */
+  useEffect(() => {
+    if (!state) return;
+    // If taxation completed (pendingTaxes cleared) but the phase
+    // still reads 'taxes', the overlay will stay on screen. This
+    // detects the situation and nudges the state forward.
+    if (state.phase === 'taxes' && !state.pendingTaxes) {
+      hostReduce((prev) => {
+        if (prev.phase === 'taxes' && !prev.pendingTaxes) {
+          return { ...prev, phase: 'playing' as const, turnStartedAt: Date.now() };
+        }
+        return prev;
+      });
+    }
+    // Also: if the current player is invalid, advance the turn
+    if (state.phase === 'playing') {
+      const cur = state.players[state.currentPlayerIndex];
+      if (!cur || cur.isOut || cur.kicked || cur.dropped) {
+        hostReduce((prev) => {
+          if (prev.phase !== 'playing') return prev;
+          const c = prev.players[prev.currentPlayerIndex];
+          if (c && !c.isOut && !c.kicked && !c.dropped) return prev;
+          // Skip to next valid player
+          const n = prev.players.length;
+          let idx = prev.currentPlayerIndex;
+          let guard = 0;
+          do {
+            idx = (idx + 1) % n;
+            guard++;
+          } while ((prev.players[idx]?.isOut || prev.players[idx]?.kicked) && guard < n);
+          return { ...prev, currentPlayerIndex: idx, turnStartedAt: Date.now() };
+        });
+      }
+    }
+  }, [state, hostReduce]);
 
   /* Single-player: hands flow on their own. Show the results for a moment,
      then deal the next hand automatically — no "waiting for the host". */

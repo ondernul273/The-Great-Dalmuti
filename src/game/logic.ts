@@ -1,155 +1,122 @@
 import type { Card, GameState, Player, Rank, Role, PlayedSet, HandResult, SeatDraw } from './types';
-import { CARD_INFO, createDeck, shuffle, lowestCards, countJesters, sortHand } from './cards';
+import { CARD_INFO, createDeck, shuffle, lowestCards, sortHand } from './cards';
 
-/**
- * An all-Jester set is effectively rank 13 (the highest rank number, so it is
- * the weakest lead — a Jester is the "lowest" card, easily beaten by anything 12..1).
- */
+/* ------------------------------------------------------------------ */
+/*  Constants                                                          */
+/* ------------------------------------------------------------------ */
+
 export const ALL_JESTERS_RANK = 13 as Rank;
-
-/** Every turn is limited to 60 seconds; on expiry the player passes automatically. */
 export const TURN_TIMER_MS = 60_000;
-
-/** The official game seats 4–8; we allow 3 so a small group can still play. 8 players = 10 cards each. */
 export const MIN_PLAYERS = 3;
 export const MAX_PLAYERS = 8;
+/** Safety limit for skipping invalid players. */
+
+
+/* ------------------------------------------------------------------ */
+/*  Defensive helpers                                                   */
+/* ------------------------------------------------------------------ */
+
+function p(state: GameState, idx: number): Player | null {
+  return state.players[idx] ?? null;
+}
+
+function pname(state: GameState, idx: number): string {
+  return p(state, idx)?.name ?? 'Unknown';
+}
+
+function findNextActivePlayer(state: GameState, fromIdx: number): number {
+  const n = state.players.length;
+  if (n === 0) return 0;
+  let idx = (fromIdx + 1) % n;
+  let count = 0;
+  while ((state.players[idx]?.isOut || state.players[idx]?.kicked) && count < n) {
+    idx = (idx + 1) % n;
+    count++;
+  }
+  return idx;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Roles, deck, dealing                                               */
+/* ------------------------------------------------------------------ */
 
 export function getRoleName(role: Role): string {
-  switch (role) {
-    case 'greater-dalmuti':
-      return 'Greater Dalmuti';
-    case 'lesser-dalmuti':
-      return 'Lesser Dalmuti';
-    case 'merchant':
-      return 'Merchant';
-    case 'lesser-peon':
-      return 'Lesser Peon';
-    case 'greater-peon':
-      return 'Greater Peon';
-  }
+  const names: Record<Role, string> = {
+    'greater-dalmuti': 'Greater Dalmuti',
+    'lesser-dalmuti': 'Lesser Dalmuti',
+    merchant: 'Merchant',
+    'lesser-peon': 'Lesser Peon',
+    'greater-peon': 'Greater Peon',
+  };
+  return names[role] ?? role;
 }
 
 export function getRoleEmoji(role: Role): string {
-  switch (role) {
-    case 'greater-dalmuti':
-      return '👑';
-    case 'lesser-dalmuti':
-      return '🎩';
-    case 'merchant':
-      return '💰';
-    case 'lesser-peon':
-      return '🧹';
-    case 'greater-peon':
-      return '👣';
-  }
+  const emojis: Record<Role, string> = {
+    'greater-dalmuti': '👑',
+    'lesser-dalmuti': '🎩',
+    merchant: '💰',
+    'lesser-peon': '🧹',
+    'greater-peon': '👣',
+  };
+  return emojis[role] ?? '•';
 }
 
 export function rolesForSeating(n: number): Role[] {
-  const roles: Role[] = [];
-  for (let i = 0; i < n; i++) {
-    if (i === 0) roles.push('greater-dalmuti');
-    else if (i === 1) roles.push('lesser-dalmuti');
-    else if (i === n - 1) roles.push('greater-peon');
-    else if (i === n - 2) roles.push('lesser-peon');
-    else roles.push('merchant');
-  }
+  if (n <= 0) return [];
+  if (n === 1) return ['greater-dalmuti'];
+  if (n === 2) return ['greater-dalmuti', 'greater-peon'];
+  if (n === 3) return ['greater-dalmuti', 'lesser-dalmuti', 'greater-peon'];
+  const roles: Role[] = ['greater-dalmuti', 'lesser-dalmuti'];
+  for (let i = 2; i < n - 2; i++) roles.push('merchant');
+  roles.push('lesser-peon', 'greater-peon');
   return roles;
 }
 
 export function getPlayerIndexByRole(state: GameState, role: Role): number {
-  return state.players.findIndex((p) => p.role === role);
+  const idx = state.players.findIndex((pl) => pl?.role === role);
+  return idx >= 0 ? idx : -1;
 }
 
 function dealHands(players: Player[]): Player[] {
   const deck = shuffle(createDeck());
   const n = players.length;
+  if (n === 0) return [];
   const hands: Card[][] = players.map(() => []);
   for (let i = 0; i < deck.length; i++) {
     hands[i % n].push(deck[i]);
   }
-  return players.map((p, i) => ({
-    ...p,
+  return players.map((pl, i) => ({
+    ...pl,
     hand: sortHand(hands[i]),
     finishOrder: undefined,
     isOut: false,
   }));
 }
 
-/**
- * Builds the taxation state: the Peons automatically surrender their lowest cards,
- * then we wait for the Dalmuti(s) to choose what to hand back.
- */
-export function beginTaxation(state: GameState): GameState {
-  const s = structuredClone(state);
-  const gpIdx = getPlayerIndexByRole(s, 'greater-peon');
-  const gdIdx = getPlayerIndexByRole(s, 'greater-dalmuti');
-  const lpIdx = getPlayerIndexByRole(s, 'lesser-peon');
-  const ldIdx = getPlayerIndexByRole(s, 'lesser-dalmuti');
+/* ------------------------------------------------------------------ */
+/*  Seating & dealing phases                                           */
+/* ------------------------------------------------------------------ */
 
-  // Greater Peon surrenders lowest two cards
-  const gpLowestTwo = lowestCards(s.players[gpIdx].hand, 2);
-  s.players[gpIdx].hand = s.players[gpIdx].hand.filter(
-    (c) => !gpLowestTwo.some((g) => g.id === c.id)
-  );
-
-  // Lesser Peon surrenders lowest card (only if LD and LP are distinct people)
-  const lesserExchangeRequired =
-    lpIdx !== -1 && ldIdx !== -1 && lpIdx !== ldIdx && lpIdx !== gpIdx && ldIdx !== gdIdx;
-  let lesserPeonCardGiven: Card | null = null;
-  if (lesserExchangeRequired) {
-    lesserPeonCardGiven = lowestCards(s.players[lpIdx].hand, 1)[0] ?? null;
-    if (lesserPeonCardGiven) {
-      s.players[lpIdx].hand = s.players[lpIdx].hand.filter(
-        (c) => c.id !== lesserPeonCardGiven!.id
-      );
-    }
-  }
-
-  s.phase = 'taxes';
-  s.pendingTaxes = {
-    greaterPeonCardsGiven: gpLowestTwo,
-    lesserPeonCardGiven,
-    greaterDalmutiCardsGiven: null,
-    lesserDalmutiCardGiven: null,
-    lesserExchangeRequired: lesserExchangeRequired && !!lesserPeonCardGiven,
-    greaterDalmutiId: s.players[gdIdx].id,
-    lesserDalmutiId: lesserExchangeRequired ? s.players[ldIdx].id : null,
-  };
-  s.message = 'Taxation: the Peons have surrendered their finest cards. The Dalmutis must return tribute.';
-  return s;
-}
-
-/**
- * Official setup: every player draws one card. The lowest card becomes the
- * Greater Dalmuti, the next the Lesser Dalmuti, … and the highest the Greater
- * Peon. The Jester counts as the highest card for the draw. Ties are broken by
- * lot (the players are shuffled first and the sort is stable).
- */
 export function drawForSeats(players: Player[]): { ordered: Player[]; draws: SeatDraw[] } {
   const deck = shuffle(createDeck());
   const shuffledPlayers = shuffle(players);
-  const draws: SeatDraw[] = shuffledPlayers.map((p, i) => ({ playerId: p.id, card: deck[i] }));
+  const draws: SeatDraw[] = shuffledPlayers.map((pl, i) => ({ playerId: pl.id, card: deck[i] }));
   const sorted = [...draws].sort((a, b) => a.card.rank - b.card.rank);
   const roles = rolesForSeating(sorted.length);
   const ordered = sorted.map((d, i) => ({
-    ...shuffledPlayers.find((p) => p.id === d.playerId)!,
+    ...shuffledPlayers.find((pl) => pl.id === d.playerId)!,
     role: roles[i],
   }));
   return { ordered, draws: sorted };
 }
 
-/**
- * A fresh game: the players draw for seats, then the whole deck is dealt.
- * The table shows the 'seating' reveal first, then the 'dealing' animation,
- * and only then moves on to taxation.
- */
 export function initializeNewGame(
   players: Player[],
   opts: { timerEnabled?: boolean; timerSeconds?: number; cardSet?: string } = {}
 ): GameState {
-  const { ordered, draws } = drawForSeats(players.map((p) => ({ ...p, hand: [] })));
+  const { ordered, draws } = drawForSeats(players.map((pl) => ({ ...pl, hand: [] })));
   const dealt = dealHands(ordered);
-
   return {
     phase: 'seating',
     players: dealt,
@@ -174,34 +141,53 @@ export function initializeNewGame(
   };
 }
 
-/**
- * Host-only moderation. `remove` empties the seat (spectator until the next
- * reseat, where it disappears); `ai` hands the seat to a court AI that plays on.
- */
-export function applyKick(
-  state: GameState,
-  playerId: string,
-  kind: 'remove' | 'ai',
-  aiName?: string
-): GameState {
+export function startDealing(state: GameState): GameState {
+  if (state.phase !== 'seating') return state;
   const s = structuredClone(state);
-  const idx = s.players.findIndex((p) => p.id === playerId);
-  if (idx === -1) return state;
-  const p = s.players[idx];
-  if (p.kicked) return state;
-  const oldName = p.name;
-  p.kicked = true;
+  s.phase = 'dealing';
+  s.message = 'Seats taken. The Greater Peon shuffles and deals the whole deck…';
+  s.turnStartedAt = Date.now();
+  return s;
+}
+
+export function startTaxation(state: GameState): GameState {
+  if (state.phase !== 'dealing') return state;
+  return beginTaxation(state);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Kicking & leaving                                                   */
+/* ------------------------------------------------------------------ */
+
+export function applyKick(state: GameState, playerId: string, kind: 'remove' | 'ai', aiName?: string): GameState {
+  const s = structuredClone(state);
+  const idx = s.players.findIndex((pl) => pl.id === playerId);
+  if (idx === -1) return s;
+  const target = s.players[idx];
+  if (!target || target.kicked) return s;
+
+  const oldName = target.name;
+  target.kicked = true;
 
   if (kind === 'ai') {
-    p.id = `ai-kick-${Math.random().toString(36).slice(2, 7)}`;
-    p.name = aiName ?? 'Courtier';
-    p.isHost = false;
-    s.message = `${oldName} left the seat — ${p.name} takes over the hand.`;
+    const newId = `ai-kick-${Math.random().toString(36).slice(2, 7)}`;
+    target.id = newId;
+    target.name = aiName ?? 'Courtier';
+    target.isHost = false;
+    s.message = `${oldName} left the seat — ${target.name} takes over the hand.`;
+    // CRITICAL: if the kicked player was current or leader, update the timer
+    // so the AI replacement's turn fires immediately.
+    if (s.currentPlayerIndex === idx) {
+      s.turnStartedAt = Date.now(); // force the timeout to re-fire
+    }
+    if (s.leaderIndex === idx) {
+      s.leaderIndex = idx;
+    }
   } else {
-    p.dropped = true;
-    p.isOut = true;
-    p.hand = [];
-    p.finishOrder = 900; // always sorted last; last place scores 0
+    target.dropped = true;
+    target.isOut = true;
+    target.hand = [];
+    target.finishOrder = 900;
     s.passedIds = s.passedIds.filter((id) => id !== playerId);
     s.message = `${oldName} was removed from the table by the host.`;
     if (s.currentPlayerIndex === idx) {
@@ -217,17 +203,11 @@ export function applyKick(
   return s;
 }
 
-/**
- * A player may ask to leave once the current hand ends (or cancel that
- * request). Purely a flag on their seat — visible to everyone via the
- * synced GameState — that the app's networking layer watches to perform the
- * real disconnect the moment `phase` becomes `'hand-end'`.
- */
 export function setLeaveIntent(state: GameState, playerId: string, queued: boolean): GameState {
   const s = structuredClone(state);
-  const idx = s.players.findIndex((p) => p.id === playerId);
-  if (idx === -1) return state;
-  if (!!s.players[idx].leavingAfterRound === queued) return state;
+  const idx = s.players.findIndex((pl) => pl.id === playerId);
+  if (idx === -1) return s;
+  if (!!s.players[idx].leavingAfterRound === queued) return s;
   s.players[idx].leavingAfterRound = queued;
   s.message = queued
     ? `🚪 ${s.players[idx].name} will leave after this round.`
@@ -235,31 +215,18 @@ export function setLeaveIntent(state: GameState, playerId: string, queued: boole
   return s;
 }
 
-/** Moves from the 'seating' reveal into the dealing animation. */
-export function startDealing(state: GameState): GameState {
-  if (state.phase !== 'seating') return state;
-  const s = structuredClone(state);
-  s.phase = 'dealing';
-  s.message = 'Seats taken. The Greater Peon shuffles and deals the whole deck…';
-  s.turnStartedAt = Date.now();
-  return s;
-}
-
-/** Moves from the 'dealing' phase into taxation (peons surrender lowest cards). */
-export function startTaxation(state: GameState): GameState {
-  if (state.phase !== 'dealing') return state;
-  return beginTaxation(state);
-}
+/* ------------------------------------------------------------------ */
+/*  Reseat for next hand                                                */
+/* ------------------------------------------------------------------ */
 
 export function reseatForNextHand(state: GameState): GameState {
   const s = structuredClone(state);
-  // Dropped seats (host-kicked "remove") leave the table for good.
-  const continuing = s.players.filter((p) => !p.dropped);
+  const continuing = s.players.filter((pl) => !pl.dropped);
   const ordered = [...continuing].sort(
     (a, b) => (a.kicked ? 1_000_000 : a.finishOrder ?? 99) - (b.kicked ? 1_000_000 : b.finishOrder ?? 99)
   );
   const roles = rolesForSeating(ordered.length);
-  const reseated = ordered.map((p, i) => ({ ...p, role: roles[i], hand: [], kicked: false }));
+  const reseated = ordered.map((pl, i) => ({ ...pl, role: roles[i], hand: [], kicked: false }));
 
   s.players = dealHands(reseated);
   s.currentPlayerIndex = 0;
@@ -274,7 +241,115 @@ export function reseatForNextHand(state: GameState): GameState {
   s.phase = 'dealing';
   s.message = 'New ranks assigned. The Greater Peon shuffles and deals…';
   s.turnStartedAt = Date.now();
+  return s;
+}
 
+/* ------------------------------------------------------------------ */
+/*  Taxation                                                           */
+/* ------------------------------------------------------------------ */
+
+export function beginTaxation(state: GameState): GameState {
+  const s = structuredClone(state);
+  const gpIdx = getPlayerIndexByRole(s, 'greater-peon');
+  const gdIdx = getPlayerIndexByRole(s, 'greater-dalmuti');
+  const lpIdx = getPlayerIndexByRole(s, 'lesser-peon');
+  const ldIdx = getPlayerIndexByRole(s, 'lesser-dalmuti');
+
+  if (gpIdx < 0 || gdIdx < 0) {
+    s.phase = 'playing';
+    s.message = 'Taxation skipped — not all ranks present.';
+    return s;
+  }
+
+  const gpLowestTwo = lowestCards(s.players[gpIdx].hand, 2);
+  s.players[gpIdx].hand = s.players[gpIdx].hand.filter((c) => !gpLowestTwo.some((g) => g.id === c.id));
+
+  const lesserExchangeRequired = lpIdx !== -1 && ldIdx !== -1 && lpIdx !== ldIdx && lpIdx !== gpIdx && ldIdx !== gdIdx;
+  let lesserPeonCardGiven: Card | null = null;
+  if (lesserExchangeRequired && lpIdx >= 0) {
+    lesserPeonCardGiven = lowestCards(s.players[lpIdx].hand, 1)[0] ?? null;
+    if (lesserPeonCardGiven) {
+      s.players[lpIdx].hand = s.players[lpIdx].hand.filter((c) => c.id !== lesserPeonCardGiven!.id);
+    }
+  }
+
+  s.phase = 'taxes';
+  s.pendingTaxes = {
+    greaterPeonCardsGiven: gpLowestTwo,
+    lesserPeonCardGiven,
+    greaterDalmutiCardsGiven: null,
+    lesserDalmutiCardGiven: null,
+    lesserExchangeRequired: lesserExchangeRequired && !!lesserPeonCardGiven,
+    greaterDalmutiId: s.players[gdIdx].id,
+    lesserDalmutiId: lesserExchangeRequired && ldIdx >= 0 ? s.players[ldIdx].id : null,
+  };
+  s.message = 'Taxation: the Peons have surrendered their finest cards. The Dalmutis must return tribute.';
+  return s;
+}
+
+export function taxesComplete(state: GameState): boolean {
+  const t = state.pendingTaxes;
+  if (!t) return true;
+  return (t.greaterDalmutiCardsGiven !== null) && (!t.lesserExchangeRequired || t.lesserDalmutiCardGiven !== null);
+}
+
+export function submitTribute(state: GameState, playerId: string, cards: Card[]): GameState {
+  const s = structuredClone(state);
+  const t = s.pendingTaxes;
+  if (!t || s.phase !== 'taxes') return s;
+  if (playerId === t.greaterDalmutiId) {
+    if (cards.length !== 2 || t.greaterDalmutiCardsGiven !== null) return s;
+    t.greaterDalmutiCardsGiven = cards;
+  } else if (t.lesserDalmutiId && playerId === t.lesserDalmutiId) {
+    if (cards.length !== 1 || t.lesserDalmutiCardGiven !== null) return s;
+    t.lesserDalmutiCardGiven = cards[0];
+  } else {
+    return s;
+  }
+  if (!taxesComplete(s)) {
+    s.message = 'Tribute received. Awaiting the other Dalmuti...';
+    return s;
+  }
+  return finalizeTaxes(s);
+}
+
+function finalizeTaxes(state: GameState): GameState {
+  const s = structuredClone(state);
+  const t = s.pendingTaxes!;
+  const gpIdx = getPlayerIndexByRole(s, 'greater-peon');
+  const gdIdx = getPlayerIndexByRole(s, 'greater-dalmuti');
+  const lpIdx = getPlayerIndexByRole(s, 'lesser-peon');
+  const ldIdx = getPlayerIndexByRole(s, 'lesser-dalmuti');
+
+  if (gdIdx < 0 || gpIdx < 0) {
+    s.phase = 'playing';
+    s.pendingTaxes = null;
+    s.turnStartedAt = Date.now();
+    return s;
+  }
+
+  const gdCards = t.greaterDalmutiCardsGiven ?? [];
+  s.players[gdIdx].hand = s.players[gdIdx].hand.filter((c) => !gdCards.some((g) => g.id === c.id));
+  s.players[gdIdx].hand.push(...t.greaterPeonCardsGiven);
+  s.players[gpIdx].hand.push(...gdCards);
+
+  if (t.lesserExchangeRequired && t.lesserDalmutiCardGiven && ldIdx >= 0 && lpIdx >= 0) {
+    const ldCard = t.lesserDalmutiCardGiven;
+    s.players[ldIdx].hand = s.players[ldIdx].hand.filter((c) => c.id !== ldCard.id);
+    if (t.lesserPeonCardGiven) s.players[ldIdx].hand.push(t.lesserPeonCardGiven);
+    s.players[lpIdx].hand.push(ldCard);
+  }
+
+  s.players = s.players.map((pl) => ({ ...pl, hand: sortHand(pl.hand) }));
+  s.pendingTaxes = null;
+  s.phase = 'playing';
+  s.currentTrick = [];
+  s.lastValidPlay = null;
+  const leadIdx = Math.max(0, gdIdx);
+  s.currentPlayerIndex = leadIdx;
+  s.leaderIndex = leadIdx;
+  s.message = `Taxes paid. ${pname(s, leadIdx)} (Greater Dalmuti) leads.`;
+  s.turnStartedAt = Date.now();
   return s;
 }
 
@@ -282,57 +357,23 @@ export function reseatForNextHand(state: GameState): GameState {
 /*  Revolution                                                         */
 /* ------------------------------------------------------------------ */
 
-export function playersWithTwoJesters(state: GameState): Player[] {
-  return state.players.filter((p) => countJesters(p.hand) >= 2);
-}
-
-export function checkRevolution(state: GameState): {
-  canRevolution: boolean;
-  playerId: string | null;
-  isGreaterRevolution: boolean;
-} {
-  for (const p of state.players) {
-    if (countJesters(p.hand) >= 2) {
-      return {
-        canRevolution: true,
-        playerId: p.id,
-        isGreaterRevolution: p.role === 'greater-peon',
-      };
-    }
-  }
-  return { canRevolution: false, playerId: null, isGreaterRevolution: false };
-}
-
-/**
- * Revolution ends taxation. If the caller was the Greater Peon it is a
- * Greater Revolution: every player is reseated in reverse order.
- * The cards the peons already surrendered are handed back to them.
- */
 export function applyRevolution(state: GameState, greaterRevolution: boolean): GameState {
-  let s = structuredClone(state);
-
-  // Return the surrendered peon cards
+  const s = structuredClone(state);
   if (s.pendingTaxes) {
     const gpIdx = getPlayerIndexByRole(s, 'greater-peon');
-    if (gpIdx !== -1) {
-      s.players[gpIdx].hand.push(...s.pendingTaxes.greaterPeonCardsGiven);
-    }
+    if (gpIdx >= 0) s.players[gpIdx].hand.push(...s.pendingTaxes.greaterPeonCardsGiven);
     const lpIdx = getPlayerIndexByRole(s, 'lesser-peon');
-    if (lpIdx !== -1 && s.pendingTaxes.lesserPeonCardGiven) {
-      s.players[lpIdx].hand.push(s.pendingTaxes.lesserPeonCardGiven);
-    }
+    if (lpIdx >= 0 && s.pendingTaxes.lesserPeonCardGiven) s.players[lpIdx].hand.push(s.pendingTaxes.lesserPeonCardGiven);
   }
-  s.players = s.players.map((p) => ({ ...p, hand: sortHand(p.hand) }));
-
+  s.players = s.players.map((pl) => ({ ...pl, hand: sortHand(pl.hand) }));
   if (greaterRevolution) {
     const reversed = [...s.players].reverse();
     const roles = rolesForSeating(reversed.length);
-    s.players = reversed.map((p, i) => ({ ...p, role: roles[i] }));
+    s.players = reversed.map((pl, i) => ({ ...pl, role: roles[i] }));
     s.message = '⚔️ GREATER REVOLUTION! The order of the realm is overturned!';
   } else {
     s.message = '🃏 Revolution! Taxation is cancelled this hand.';
   }
-
   s.revolutionCalled = true;
   s.pendingTaxes = null;
   s.phase = 'playing';
@@ -346,87 +387,7 @@ export function applyRevolution(state: GameState, greaterRevolution: boolean): G
 }
 
 /* ------------------------------------------------------------------ */
-/*  Taxes                                                              */
-/* ------------------------------------------------------------------ */
-
-export function taxesComplete(state: GameState): boolean {
-  const t = state.pendingTaxes;
-  if (!t) return true;
-  const gdDone = t.greaterDalmutiCardsGiven !== null;
-  const ldDone = !t.lesserExchangeRequired || t.lesserDalmutiCardGiven !== null;
-  return gdDone && ldDone;
-}
-
-/** Record one Dalmuti's tribute choice. Finalises the exchange once everyone has chosen. */
-export function submitTribute(
-  state: GameState,
-  playerId: string,
-  cards: Card[]
-): GameState {
-  const s = structuredClone(state);
-  const t = s.pendingTaxes;
-  if (!t || s.phase !== 'taxes') return state;
-
-  if (playerId === t.greaterDalmutiId) {
-    if (cards.length !== 2) return state;
-    if (t.greaterDalmutiCardsGiven !== null) return state; // already submitted
-    t.greaterDalmutiCardsGiven = cards;
-  } else if (t.lesserDalmutiId && playerId === t.lesserDalmutiId) {
-    if (cards.length !== 1) return state;
-    if (t.lesserDalmutiCardGiven !== null) return state;
-    t.lesserDalmutiCardGiven = cards[0];
-  } else {
-    return state;
-  }
-
-  if (!taxesComplete(s)) {
-    s.message = 'Tribute received. Awaiting the other Dalmuti...';
-    return s;
-  }
-
-  return finalizeTaxes(s);
-}
-
-function finalizeTaxes(state: GameState): GameState {
-  const s = structuredClone(state);
-  const t = s.pendingTaxes!;
-  const gpIdx = getPlayerIndexByRole(s, 'greater-peon');
-  const gdIdx = getPlayerIndexByRole(s, 'greater-dalmuti');
-  const lpIdx = getPlayerIndexByRole(s, 'lesser-peon');
-  const ldIdx = getPlayerIndexByRole(s, 'lesser-dalmuti');
-
-  const gdCards = t.greaterDalmutiCardsGiven ?? [];
-
-  // Greater Dalmuti <-> Greater Peon
-  s.players[gdIdx].hand = s.players[gdIdx].hand.filter(
-    (c) => !gdCards.some((g) => g.id === c.id)
-  );
-  s.players[gdIdx].hand.push(...t.greaterPeonCardsGiven);
-  s.players[gpIdx].hand.push(...gdCards);
-
-  // Lesser Dalmuti <-> Lesser Peon
-  if (t.lesserExchangeRequired && t.lesserDalmutiCardGiven && ldIdx !== -1 && lpIdx !== -1) {
-    const ldCard = t.lesserDalmutiCardGiven;
-    s.players[ldIdx].hand = s.players[ldIdx].hand.filter((c) => c.id !== ldCard.id);
-    if (t.lesserPeonCardGiven) s.players[ldIdx].hand.push(t.lesserPeonCardGiven);
-    s.players[lpIdx].hand.push(ldCard);
-  }
-
-  s.players = s.players.map((p) => ({ ...p, hand: sortHand(p.hand) }));
-  s.pendingTaxes = null;
-  s.phase = 'playing';
-  s.currentTrick = [];
-  s.lastValidPlay = null;
-  const leadIdx = Math.max(0, gdIdx);
-  s.currentPlayerIndex = leadIdx;
-  s.leaderIndex = leadIdx;
-  s.message = `Taxes paid. ${s.players[leadIdx].name} (Greater Dalmuti) leads.`;
-  s.turnStartedAt = Date.now();
-  return s;
-}
-
-/* ------------------------------------------------------------------ */
-/*  Play                                                               */
+/*  Play & Pass                                                        */
 /* ------------------------------------------------------------------ */
 
 export function getEffectiveRank(cards: Card[]): Rank | null {
@@ -444,20 +405,7 @@ export function canPlayCards(selectedCards: Card[], lastPlay: PlayedSet | null):
   if (effRank === null) return false;
   if (!lastPlay) return true;
   if (selectedCards.length !== lastPlay.cards.length) return false;
-  // Lower rank number beats higher rank number. Jester is rank 13 (highest),
-  // so anything 1-12 can beat it.
   return effRank < lastPlay.effectiveRank;
-}
-
-function findNextActivePlayer(state: GameState, fromIdx: number): number {
-  const n = state.players.length;
-  let idx = (fromIdx + 1) % n;
-  let count = 0;
-  while (state.players[idx].isOut && count < n) {
-    idx = (idx + 1) % n;
-    count++;
-  }
-  return idx;
 }
 
 export function describeSet(cards: Card[]): string {
@@ -468,21 +416,16 @@ export function describeSet(cards: Card[]): string {
   return `${cards.length} × ${plural}`;
 }
 
-/**
- * Score a finished hand: with N players, 1st place earns N-1 points,
- * 2nd N-2, ... last place 0. (5 players -> 4,3,2,1,0)
- */
 function recordHandResult(s: GameState): void {
   const n = s.players.length;
-  const sortedStandings = [...s.players].sort(
-    (a, b) =>
-      (a.kicked ? 1_000_000 : a.finishOrder ?? 99) - (b.kicked ? 1_000_000 : b.finishOrder ?? 99)
+  const sorted = [...s.players].sort(
+    (a, b) => (a.kicked ? 1_000_000 : a.finishOrder ?? 99) - (b.kicked ? 1_000_000 : b.finishOrder ?? 99)
   );
   const result: HandResult = {
     hand: s.handNumber,
-    standings: sortedStandings.map((p, idx) => ({
-      playerId: p.id,
-      name: p.kicked ? `${p.name} (removed)` : p.name,
+    standings: sorted.map((pl, idx) => ({
+      playerId: pl.id,
+      name: pl.kicked ? `${pl.name} (removed)` : pl.name,
       place: idx + 1,
       points: Math.max(0, n - 1 - idx),
     })),
@@ -495,9 +438,10 @@ function recordHandResult(s: GameState): void {
 
 export function applyPlay(state: GameState, playerId: string, cards: Card[]): GameState {
   const s = structuredClone(state);
-  const playerIdx = s.players.findIndex((p) => p.id === playerId);
-  if (playerIdx === -1) return state;
-  if (s.players[playerIdx].isOut) return state;
+  const playerIdx = s.players.findIndex((pl) => pl.id === playerId);
+  if (playerIdx < 0) return state;
+  const player = s.players[playerIdx];
+  if (!player || player.isOut || player.kicked || player.dropped) return state;
 
   const effRank = getEffectiveRank(cards);
   if (effRank === null) return state;
@@ -505,44 +449,40 @@ export function applyPlay(state: GameState, playerId: string, cards: Card[]): Ga
 
   const wasClear = s.lastValidPlay === null;
   const cardIds = new Set(cards.map((c) => c.id));
-  s.players[playerIdx].hand = s.players[playerIdx].hand.filter((c) => !cardIds.has(c.id));
+  player.hand = player.hand.filter((c) => !cardIds.has(c.id));
 
   const play: PlayedSet = { playerId, cards, effectiveRank: effRank };
   s.currentTrick.push(play);
-  // A fresh lead clears every PASSED badge; playing also clears your own.
   if (wasClear) s.passedIds = [];
   s.passedIds = s.passedIds.filter((id) => id !== playerId);
   s.lastValidPlay = play;
   s.leaderIndex = playerIdx;
 
-  const playerName = s.players[playerIdx].name;
   const hasJester = cards.some((c) => c.rank === 13);
   const jesterNote = hasJester && !cards.every((c) => c.rank === 13) ? ' (with Jester wild)' : '';
-  s.message = `${playerName} plays ${describeSet(cards)}${jesterNote}`;
+  s.message = `${pname(s, playerIdx)} plays ${describeSet(cards)}${jesterNote}`;
 
-  if (s.players[playerIdx].hand.length === 0) {
-    const outCount = s.players.filter((p) => p.isOut).length;
-    s.players[playerIdx].isOut = true;
-    s.players[playerIdx].finishOrder = outCount + 1;
-    s.message = `${playerName} sheds their last card and finishes #${outCount + 1}!`;
+  if (player.hand.length === 0) {
+    const outCount = s.players.filter((pl) => pl.isOut).length;
+    player.isOut = true;
+    player.finishOrder = outCount + 1;
+    s.message = `${pname(s, playerIdx)} sheds their last card and finishes #${outCount + 1}!`;
   }
 
-  const activePlayers = s.players.filter((p) => !p.isOut);
+  const activePlayers = s.players.filter((pl) => !pl.isOut && !pl.kicked);
   if (activePlayers.length <= 1) {
     const remaining = activePlayers[0];
     if (remaining) {
-      const outCount = s.players.filter((p) => p.isOut).length;
-      const remIdx = s.players.findIndex((p) => p.id === remaining.id);
-      s.players[remIdx].isOut = true;
-      s.players[remIdx].finishOrder = outCount + 1;
+      const outCount = s.players.filter((pl) => pl.isOut).length;
+      const remIdx = s.players.findIndex((pl) => pl.id === remaining.id);
+      if (remIdx >= 0) {
+        s.players[remIdx].isOut = true;
+        s.players[remIdx].finishOrder = outCount + 1;
+      }
     }
     recordHandResult(s);
-    // Anyone who scheduled a "leave after this round" departs for good now —
-    // reseatForNextHand already drops seats flagged `dropped`, and the
-    // networking layer watches `leavingAfterRound` to perform the real
-    // disconnect the instant this hand-end screen appears.
-    for (const p of s.players) {
-      if (p.leavingAfterRound) p.dropped = true;
+    for (const pl of s.players) {
+      if (pl.leavingAfterRound) pl.dropped = true;
     }
     s.phase = 'hand-end';
     s.message = 'The hand is over! Points have been awarded.';
@@ -554,50 +494,71 @@ export function applyPlay(state: GameState, playerId: string, cards: Card[]): Ga
   return s;
 }
 
-export function applyPass(
-  state: GameState,
-  playerId: string,
-  opts?: { timedOut?: boolean }
-): GameState {
+export function applyPass(state: GameState, playerId: string, opts?: { timedOut?: boolean }): GameState {
   const s = structuredClone(state);
-  const playerIdx = s.players.findIndex((p) => p.id === playerId);
-  if (playerIdx === -1) return state;
-  // The host is authoritative. Queued UI passes, delayed network packets and
-  // duplicate clicks are ignored unless this player is truly on turn now.
-  if (s.phase !== 'playing' || s.players[s.currentPlayerIndex]?.id !== playerId) return state;
-  if (s.players[playerIdx].isOut || s.players[playerIdx].kicked) return state;
+  const playerIdx = s.players.findIndex((pl) => pl.id === playerId);
+  if (playerIdx < 0) return state;
+  const player = s.players[playerIdx];
+  if (!player || player.isOut || player.kicked || player.dropped) return s;
+
+  // Safety: if phase is not 'playing', or this player isn't the current player,
+  // just move to the next active player anyway — the game MUST advance.
+  const currentPlayer = s.players[s.currentPlayerIndex];
+  const isMyTurn = currentPlayer?.id === playerId;
 
   const nextIdx = findNextActivePlayer(s, playerIdx);
-  const name = s.players[playerIdx].name;
+  const name = pname(s, playerIdx);
 
   if (opts?.timedOut) {
     const count = (s.afkCounts[playerId] ?? 0) + 1;
     s.afkCounts[playerId] = count;
-    s.message =
-      count >= 2
-        ? `⏳ ${name} appears to be AFK. (missed ${count} turns)`
-        : `⏳ Warning: ${name} missed a turn.`;
+    s.message = count >= 2
+      ? `⏳ ${name} appears to be AFK. (missed ${count} turns)`
+      : `⏳ Warning: ${name} missed a turn.`;
   } else {
     s.message = `${name} passes.`;
   }
   if (!s.passedIds.includes(playerId)) s.passedIds.push(playerId);
 
   let effectiveLeader = s.leaderIndex;
-  if (s.players[effectiveLeader].isOut) {
+  if (effectiveLeader >= 0 && s.players[effectiveLeader]?.isOut) {
     effectiveLeader = findNextActivePlayer(s, effectiveLeader);
   }
 
-  if (nextIdx === effectiveLeader) {
-    if (!opts?.timedOut) s.message = `${s.players[effectiveLeader].name} takes the trick and leads.`;
-    s.currentTrick = [];
-    s.lastValidPlay = null;
-    s.passedIds = [];
-    s.leaderIndex = effectiveLeader;
-    s.currentPlayerIndex = effectiveLeader;
+  // Special handling: if it IS the current player's turn (normal pass) or if
+  // it's a timeout but the player already moved on, still advance.
+  if (isMyTurn) {
+    if (nextIdx === effectiveLeader) {
+      if (!opts?.timedOut) s.message = `${pname(s, effectiveLeader)} takes the trick and leads.`;
+      s.currentTrick = [];
+      s.lastValidPlay = null;
+      s.passedIds = [];
+      s.leaderIndex = effectiveLeader;
+      s.currentPlayerIndex = effectiveLeader;
+    } else {
+      s.currentPlayerIndex = nextIdx;
+    }
   } else {
+    // Out-of-turn pass (timeout arrived late) — just advance to the next player.
     s.currentPlayerIndex = nextIdx;
   }
 
   s.turnStartedAt = Date.now();
+  return s;
+}
+
+/**
+ * Hard safety net: if the current player is somehow invalid (out, kicked,
+ * or idx doesn't exist), force-advance to the next valid player.
+ * Call this as a last resort after a timeout or reconnect.
+ */
+export function forceAdvanceTurn(state: GameState): GameState {
+  const s = structuredClone(state);
+  const cur = s.players[s.currentPlayerIndex];
+  if (!cur || cur.isOut || cur.kicked || cur.dropped) {
+    const next = findNextActivePlayer(s, s.currentPlayerIndex);
+    s.currentPlayerIndex = next;
+    s.turnStartedAt = Date.now();
+  }
   return s;
 }
