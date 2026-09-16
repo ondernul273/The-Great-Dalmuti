@@ -273,6 +273,16 @@ export default function App() {
   });
   sockRef.current = sock;
 
+  const handleNameChange = useCallback(
+    (name: string) => {
+    setMyName(name);
+    if (sock.lobby) {
+    sock.renamePlayer(name);
+  }
+  },
+  [sock]
+);
+
   const broadcastState = useCallback((next: GameState) => {
     if (isHostMode(modeRef.current)) netBroadcast('state', next);
   }, [netBroadcast]);
@@ -1364,7 +1374,7 @@ export default function App() {
           status={peer.status}
           roomCode={peer.roomCode}
           myName={myName}
-          onNameChange={setMyName}
+          onNameChange={handleNameChange}
           onHost={handleHost}
           onJoin={handleJoin}
           onStart={startHostedGame}
