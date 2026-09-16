@@ -272,7 +272,7 @@ export function useSocketLobby({
 
   
   const renamePlayer = useCallback((name: string) => {
-console.log('[CLIENT] rename emit', name);
+
  
 socketRef.current?.emit('lobby:rename', { name });
 }, []);

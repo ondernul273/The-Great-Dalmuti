@@ -345,7 +345,7 @@ io.on('connection', (socket) => {
 
   /* ----------------------------- rename ----------------------------- */
   socket.on('lobby:rename', ({ name } = {}) => {
-  console.log('[RENAME] received', name);
+  
 
   const lobby = lobbyOfSocket(socket);
   console.log('[RENAME] lobby?', !!lobby);

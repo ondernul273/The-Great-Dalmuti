@@ -275,7 +275,7 @@ export default function App() {
 
   const handleNameChange = useCallback(
   (name: string) => {
-    console.log('[APP] rename', name);
+    
 
     setMyName(name);
 
