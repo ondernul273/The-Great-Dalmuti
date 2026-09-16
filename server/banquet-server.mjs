@@ -345,39 +345,34 @@ io.on('connection', (socket) => {
 
   /* ----------------------------- rename ----------------------------- */
   socket.on('lobby:rename', ({ name } = {}) => {
-  
-
   const lobby = lobbyOfSocket(socket);
-  console.log('[RENAME] lobby?', !!lobby);
-
   if (!lobby) return;
 
-  console.log(
-    '[RENAME] players:',
-    lobby.players.map(p => ({
-      id: p.id,
-      name: p.name,
-      socketId: p.socketId
-    }))
-  );
-
   const player = lobby.players.find(
-    p => p.socketId === socket.id
+    (p) => p.socketId === socket.id
   );
-
-  console.log('[RENAME] found player:', player?.name);
 
   if (!player) return;
 
-  player.name = String(name ?? '')
+  const oldName = player.name;
+
+  const newName = String(name ?? '')
     .trim()
     .slice(0, 16);
 
+  if (!newName || newName === oldName) return;
+
+  player.name = newName;
+
   if (player.isHost) {
-    lobby.hostName = player.name;
+    lobby.hostName = newName;
   }
 
-  console.log('[RENAME] updated to', player.name);
+  io.to(room(lobby.id)).emit('lobby:chat', {
+    name: 'Herald',
+    text: `${oldName} is now known as ${newName}.`,
+    system: true,
+  });
 
   broadcastLobby(lobby);
 });
