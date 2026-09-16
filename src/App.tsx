@@ -274,11 +274,12 @@ export default function App() {
   sockRef.current = sock;
 
   const handleNameChange = useCallback(
-    (name: string) => {
+  (name: string) => {
+    console.log('[APP] rename', name);
+
     setMyName(name);
-    if (sock.lobby) {
+
     sock.renamePlayer(name);
-  }
   },
   [sock]
 );

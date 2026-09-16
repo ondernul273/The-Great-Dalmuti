@@ -343,6 +343,44 @@ io.on('connection', (socket) => {
     broadcastLobby(lobby);
   });
 
+  /* ----------------------------- rename ----------------------------- */
+  socket.on('lobby:rename', ({ name } = {}) => {
+  console.log('[RENAME] received', name);
+
+  const lobby = lobbyOfSocket(socket);
+  console.log('[RENAME] lobby?', !!lobby);
+
+  if (!lobby) return;
+
+  console.log(
+    '[RENAME] players:',
+    lobby.players.map(p => ({
+      id: p.id,
+      name: p.name,
+      socketId: p.socketId
+    }))
+  );
+
+  const player = lobby.players.find(
+    p => p.socketId === socket.id
+  );
+
+  console.log('[RENAME] found player:', player?.name);
+
+  if (!player) return;
+
+  player.name = String(name ?? '')
+    .trim()
+    .slice(0, 16);
+
+  if (player.isHost) {
+    lobby.hostName = player.name;
+  }
+
+  console.log('[RENAME] updated to', player.name);
+
+  broadcastLobby(lobby);
+});
   /* ------------------------------- chat ------------------------------ */
   socket.on('lobby:chat', ({ text } = {}) => {
     const lobby = lobbyOfSocket(socket);

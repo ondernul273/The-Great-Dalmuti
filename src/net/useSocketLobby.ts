@@ -269,9 +269,14 @@ export function useSocketLobby({
     socketRef.current?.emit('lobby:chat', { text });
   }, []);
 
+
+  
   const renamePlayer = useCallback((name: string) => {
-  socketRef.current?.emit('lobby:rename', { name });
-  }, []);
+console.log('[CLIENT] rename emit', name);
+ 
+socketRef.current?.emit('lobby:rename', { name });
+}, []);
+
 
   const addAI = useCallback((name: string) => {
     socketRef.current?.emit('lobby:addai', { name });
