@@ -1419,6 +1419,11 @@ if (p.taunt && TAUNTS[p.taunt]) {
   useEffect(() => subscribeToCardArt(bumpArtVersion), [bumpArtVersion]);
 
 useEffect(() => {
+  if (!musicEnabled) {
+    pauseMusic();
+    return;
+  }
+
   const inMenu =
     mode === 'none' ||
     mode === 'online-host' ||
@@ -1431,7 +1436,7 @@ useEffect(() => {
   } else if (state) {
     playGameMusic();
   }
-}, [mode]);
+}, [mode, state, musicEnabled]);
 
 
 
@@ -1547,6 +1552,12 @@ document.removeEventListener('keydown', unlock);
 onMusicEnabled={(v) => {
   setMusicEnabled(v);
   localStorage.setItem('musicEnabled', String(v));
+
+  if (!v) {
+    pauseMusic();
+  } else {
+    resumeMusic();
+  }
 }}
         />
       </>
