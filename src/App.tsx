@@ -41,7 +41,10 @@ import {
 import { recordHandOutcome } from './game/stats';
 import { getActiveSet, rememberSet, setThemeOverride, subscribeToCardArt } from './components/cardAssets';
 import { TAUNTS } from './taunts';
-import { playTaunt } from './playTaunt.ts';
+import {
+  playTaunt,
+  setSfxVolume as setAudioSfxVolume,
+} from './playTaunt.ts';
 import {
 playMenuMusic,
 playGameMusic,
@@ -143,6 +146,9 @@ const [musicVolume, setMusicVolume] = useState(
 
 const [sfxEnabled, setSfxEnabled] = useState(
   localStorage.getItem('sfxEnabled') !== 'false'
+);
+const [sfxVolume, setSfxVolume] = useState(
+  Number(localStorage.getItem('sfxVolume') ?? '70')
 );
   const [lobbyError, setLobbyError] = useState<string | null>(null);
   const [peerNames, setPeerNames] = useState<Record<string, string>>({});
@@ -1467,6 +1473,10 @@ useEffect(() => {
 }, [musicVolume]);
 
 useEffect(() => {
+setAudioSfxVolume(sfxVolume / 100);
+}, [sfxVolume]);
+
+useEffect(() => {
 const handleVisibilityChange = () => {
 if (document.hidden) {
 pauseMusic();
@@ -1594,8 +1604,14 @@ onMusicVolume={(v) => {
 
 sfxEnabled={sfxEnabled}
 onSfxEnabled={(v) => {
-  setSfxEnabled(v);
-  localStorage.setItem('sfxEnabled', String(v));
+setSfxEnabled(v);
+localStorage.setItem('sfxEnabled', String(v));
+}}
+ 
+sfxVolume={sfxVolume}
+onSfxVolume={(v) => {
+setSfxVolume(v);
+localStorage.setItem('sfxVolume', String(v));
 }}
 
         />

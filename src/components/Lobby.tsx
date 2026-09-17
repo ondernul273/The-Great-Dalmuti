@@ -91,6 +91,8 @@ interface LobbyProps {
 onMusicVolume: (v: number) => void;
   sfxEnabled: boolean;
 onSfxEnabled: (v: boolean) => void;
+sfxVolume: number;
+onSfxVolume: (v: number) => void;
 }
 
 type Screen =
@@ -164,7 +166,10 @@ onMusicVolume,
 
 sfxEnabled,
 onSfxEnabled,
+sfxVolume,
+onSfxVolume,
 } = props;
+
 
   const [screen, setScreen] = useState<Screen>('menu');
   const [joinCode, setJoinCode] = useState('');
@@ -312,6 +317,28 @@ onSfxEnabled,
   </button>
 </div>
 
+<div>
+  <div className="flex justify-between mb-1">
+    <span className="font-serif text-amber-900">
+      SFX Volume
+    </span>
+
+    <span className="font-serif font-bold text-purple-900">
+      {sfxVolume}%
+    </span>
+  </div>
+
+  <input
+    type="range"
+    min="0"
+    max="100"
+    value={sfxVolume}
+    onChange={(e) =>
+      onSfxVolume(Number(e.target.value))
+    }
+    className="w-full"
+  />
+</div>
       <button
   onClick={() => setShowSettings(false)}
   className="mt-6 w-full py-2 rounded-lg bg-purple-800 hover:bg-purple-700 text-amber-100 flex items-center justify-center gap-2"
