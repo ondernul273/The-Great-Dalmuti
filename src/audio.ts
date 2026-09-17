@@ -70,3 +70,13 @@ export function stopMusic() {
   currentMusic = null;
   currentMode = null;
 }
+
+export function pauseMusic() {
+  currentMusic?.pause();
+}
+
+export function resumeMusic() {
+  if (!audioUnlocked) return;
+
+  currentMusic?.play().catch(() => {});
+}

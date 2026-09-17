@@ -46,6 +46,8 @@ import {
   playMenuMusic,
   playGameMusic,
   unlockAudio,
+  pauseMusic,
+  resumeMusic,
 } from './audio.ts';
 type GameMode =
   | 'none'
@@ -1427,6 +1429,28 @@ useEffect(() => {
     playGameMusic();
   }
 }, [mode]);
+
+useEffect(() => {
+const handleVisibilityChange = () => {
+if (document.hidden) {
+pauseMusic();
+} else {
+resumeMusic();
+}
+};
+ 
+document.addEventListener(
+'visibilitychange',
+handleVisibilityChange
+);
+ 
+return () => {
+document.removeEventListener(
+'visibilitychange',
+handleVisibilityChange
+);
+};
+}, []);
 
   if (mode === 'none' || !state || inBanquetLobby(mode)) {
     return (
