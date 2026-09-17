@@ -1,4 +1,14 @@
 let currentMusic: HTMLAudioElement | null = null;
+let currentMode: 'menu' | 'game' | null = null;
+let audioUnlocked = false;
+
+export function unlockAudio() {
+  audioUnlocked = true;
+}
+
+export function canPlayAudio() {
+  return audioUnlocked;
+}
 
 const GAME_TRACKS = [
   '/music/game.mp3',
@@ -11,16 +21,22 @@ const GAME_TRACKS = [
 let currentTrackIndex = 0;
 
 export function playMenuMusic() {
-  stopMusic();
+    if (!audioUnlocked) return;
+  if (currentMode === 'menu') return;
+  currentMode = 'menu';
+    stopMusic();
 
   currentMusic = new Audio('/music/menu.mp3');
   currentMusic.loop = true;
-  currentMusic.volume = 0.20;
+  currentMusic.volume = 0.10;
 
   currentMusic.play().catch(() => {});
 }
 
 export function playGameMusic() {
+  if (!audioUnlocked) return;
+  if (currentMode === 'game') return; 
+  currentMode = 'game';
   stopMusic();
 
   currentTrackIndex = Math.floor(
@@ -33,7 +49,7 @@ export function playGameMusic() {
 function playCurrentTrack() {
   currentMusic = new Audio(GAME_TRACKS[currentTrackIndex]);
 
-  currentMusic.volume = 0.08;
+  currentMusic.volume = 0.05;
 
   currentMusic.addEventListener('ended', () => {
     currentTrackIndex =
@@ -52,4 +68,5 @@ export function stopMusic() {
   }
 
   currentMusic = null;
+  currentMode = null;
 }

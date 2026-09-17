@@ -45,6 +45,7 @@ import { playTaunt } from './playTaunt.ts';
 import {
   playMenuMusic,
   playGameMusic,
+  unlockAudio,
 } from './audio.ts';
 type GameMode =
   | 'none'
@@ -633,6 +634,7 @@ if (p.taunt && TAUNTS[p.taunt]) {
 
   const startAIGame = useCallback(
     (numAI: number) => {
+      unlockAudio();
       const players: Player[] = [
         { id: 'human', name: myName.trim() || 'Player', hand: [], isHost: true, isOut: false },
       ];
@@ -1185,6 +1187,7 @@ if (p.taunt && TAUNTS[p.taunt]) {
   /* ------------------------------- lobby --------------------------------- */
 
   const handleHost = useCallback(() => {
+    unlockAudio();
     setLobbyError(null);
     setMode('online-host');
     modeRef.current = 'online-host';
@@ -1195,6 +1198,7 @@ if (p.taunt && TAUNTS[p.taunt]) {
 
   const handleJoin = useCallback(
     (code: string) => {
+      unlockAudio();
       setLobbyError(null);
       setMode('online-guest');
       modeRef.current = 'online-guest';
@@ -1211,6 +1215,7 @@ if (p.taunt && TAUNTS[p.taunt]) {
 
   const handleBanquetCreate = useCallback(
     (o: { lobbyName: string; password: string; maxPlayers: number }) => {
+      unlockAudio();
       setLobbyError(null);
       sock.createLobby({ hostName: myName.trim() || 'Host', ...o }).catch((e: Error) => {
         setLobbyError(e.message);
@@ -1227,6 +1232,7 @@ if (p.taunt && TAUNTS[p.taunt]) {
 
   const handleBanquetJoin = useCallback(
     (id: string, pw: string) => {
+      unlockAudio();
       setLobbyError(null);
       sock.joinLobby(id, pw, myName.trim() || 'Guest').catch((e: Error) => {
         setLobbyError(e.message);
@@ -1420,7 +1426,7 @@ useEffect(() => {
   } else if (state) {
     playGameMusic();
   }
-}, [mode, state]);
+}, [mode]);
 
   if (mode === 'none' || !state || inBanquetLobby(mode)) {
     return (
