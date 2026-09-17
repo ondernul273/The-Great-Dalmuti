@@ -382,6 +382,8 @@ taunt?: string;
 system?: boolean;
 id?: string;
 };
+console.log('PLAY REMOTE TAUNT', p.taunt, sfxEnabled);
+
 if (p.taunt && TAUNTS[p.taunt] && sfxEnabled) {
   playTaunt(p.taunt);
 }
@@ -1062,8 +1064,10 @@ if (p.taunt && TAUNTS[p.taunt] && sfxEnabled) {
       id,
     });
 
-    if (TAUNTS[trimmed] && sfxEnabled) {
-  playTaunt(trimmed);
+    console.log('PLAY OWN TAUNT', trimmed, sfxEnabled);
+ 
+if (TAUNTS[trimmed] && sfxEnabled) {
+playTaunt(trimmed);
 }
 
     if (isHostMode(modeRef.current)) {
