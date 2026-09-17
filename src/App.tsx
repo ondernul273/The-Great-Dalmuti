@@ -1466,7 +1466,7 @@ useEffect(() => {
   } else if (state) {
     playGameMusic();
   }
-}, [mode, state, musicEnabled]);
+}, [mode, musicEnabled, !!state]);
 
 useEffect(() => {
   setAudioMusicVolume(musicVolume / 100);
