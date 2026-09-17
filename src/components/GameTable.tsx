@@ -108,6 +108,7 @@ export function GameTable(props: GameTableProps) {
   const [selected, setSelected] = useState<string[]>([]);
   const [showScore, setShowScore] = useState(false);
   const [showChat, setShowChat] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
   const [unread, setUnread] = useState(0);
   const [dealTick, setDealTick] = useState(0);
   const [seatsRevealed, setSeatsRevealed] = useState(0);
@@ -475,37 +476,72 @@ export function GameTable(props: GameTableProps) {
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowScore(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-purple-950 font-serif font-bold rounded-lg shadow-md border-2 border-amber-900/30 transition-transform hover:-translate-y-0.5"
-            style={{ fontSize: 'var(--font-sm)' }}
-          >
-            <Trophy size="1em" /> Scores
-          </button>
-          <button
-            onClick={() => setShowChat(true)}
-            className="relative flex items-center gap-1.5 px-3 py-1.5 bg-purple-700 hover:bg-purple-600 text-amber-100 font-serif font-bold rounded-lg shadow-md border-2 border-amber-400/30 transition-transform hover:-translate-y-0.5"
-            style={{ fontSize: 'var(--font-sm)' }}
-          >
-            <MessageCircle size="1em" /> Chat
-            {unread > 0 && (
-              <span className="absolute -top-2 -right-2 min-w-[1.3em] h-[1.3em] px-1 rounded-full bg-red-600 text-white text-center font-bold border border-red-300" style={{ fontSize: 'var(--font-tiny)' }}>
-                {unread}
-              </span>
-            )}
-          </button>
-          {onBackToLobby && (
-            <button
-              onClick={() => setShowLeaveDialog(true)}
-              className="flex items-center gap-1 px-2.5 py-1.5 bg-red-900/70 hover:bg-red-800 text-amber-100 rounded-lg border border-red-400/30"
-              style={{ fontSize: 'var(--font-xs)' }}
-            >
-              <LogOut size="1em" /> Leave
-            </button>
-          )}
-        </div>
-      </header>
+  <button
+    onClick={() => setShowChat(true)}
+    className="relative flex items-center gap-1.5 px-3 py-1.5 bg-purple-700 hover:bg-purple-600 text-amber-100 font-serif font-bold rounded-lg shadow-md border-2 border-amber-400/30"
+    style={{ fontSize: 'var(--font-sm)' }}
+  >
+    <MessageCircle size="1em" />
+    Chat
 
+    {unread > 0 && (
+      <span
+        className="absolute -top-2 -right-2 min-w-[1.3em] h-[1.3em] px-1 rounded-full bg-red-600 text-white text-center font-bold border border-red-300"
+        style={{ fontSize: 'var(--font-tiny)' }}
+      >
+        {unread}
+      </span>
+    )}
+  </button>
+
+  <button
+    onClick={() => setShowMenu(true)}
+    className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-purple-950 font-serif font-bold rounded-lg shadow-md border-2 border-amber-900/30"
+    style={{ fontSize: 'var(--font-sm)' }}
+  >
+    ☰ Menu
+  </button>
+</div>
+      </header>
+{showMenu && (
+  <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
+    <div
+      className="absolute inset-0 bg-black/60"
+      onClick={() => setShowMenu(false)}
+    />
+
+    <div className="relative bg-gradient-to-br from-amber-50 to-amber-100 rounded-2xl border-4 border-amber-900/40 p-6 max-w-sm w-full">
+
+      <h2 className="font-heading font-black text-purple-900 italic mb-4 text-center">
+        Menu
+      </h2>
+
+      <div className="flex flex-col gap-2">
+
+        <button
+          onClick={() => {
+            setShowMenu(false);
+            setShowScore(true);
+          }}
+          className="w-full py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-purple-950 font-serif font-bold"
+        >
+          🏆 Scores
+        </button>
+
+        <button
+          onClick={() => {
+            setShowMenu(false);
+            setShowLeaveDialog(true);
+          }}
+          className="w-full py-2 rounded-lg bg-red-800 hover:bg-red-700 text-red-50 font-serif font-bold"
+        >
+          🚪 Leave Table
+        </button>
+
+      </div>
+    </div>
+  </div>
+)}
       {showLeaveDialog && (
         <LeaveDialog
           canScheduleLeave={!isHost && !!onScheduleLeave}
@@ -1388,7 +1424,7 @@ function SpectatorView({
   onBackToLobby?: () => void;
 }) {
   const [showScore, setShowScore] = useState(false);
-  const [showChat, setShowChat] = useState(false);
+const [showChat, setShowChat] = useState(false);
   const n = state.players.length;
 
   return (
