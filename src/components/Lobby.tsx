@@ -158,6 +158,7 @@ export function Lobby(props: LobbyProps) {
   const [showRules, setShowRules] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [showCardSets, setShowCardSets] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   /* banquet form state */
   const [lobbyName, setLobbyName] = useState('');
@@ -201,16 +202,39 @@ export function Lobby(props: LobbyProps) {
       style={{ scrollbarGutter: 'stable' }}
     >
       {showRules && <RulesPanel onClose={() => setShowRules(false)} />}
-      {showStats && <StatsPanel onClose={() => setShowStats(false)} />}
-      {showCardSets && (
-        <CardSetPanel
-          current={currentCardSet}
-          onSelect={(set) => {
-            onCardSet(set);
-          }}
-          onClose={() => setShowCardSets(false)}
-        />
-      )}
+{showStats && <StatsPanel onClose={() => setShowStats(false)} />}
+{showCardSets && (
+  <CardSetPanel
+    current={currentCardSet}
+    onSelect={(set) => {
+      onCardSet(set);
+    }}
+    onClose={() => setShowCardSets(false)}
+  />
+)}
+
+{showSettings && (
+  <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60">
+    <div className="bg-amber-50 rounded-2xl p-6 w-[450px] max-w-[90vw] border-4 border-amber-700">
+
+      <h2 className="text-2xl font-heading font-bold text-purple-900 mb-4">
+        Settings
+      </h2>
+
+      <p className="text-amber-900 font-serif">
+        Settings menu coming soon.
+      </p>
+
+      <button
+        onClick={() => setShowSettings(false)}
+        className="mt-6 w-full py-2 rounded-lg bg-purple-800 text-amber-100"
+      >
+        Close
+      </button>
+
+    </div>
+  </div>
+)}
 
       {/* Hall backdrop */}
       <div
@@ -300,20 +324,45 @@ export function Lobby(props: LobbyProps) {
               </div>
             )}
 
-            <div className="mb-5">
-              <label className="block text-amber-900 font-serif font-bold mb-1" style={{ fontSize: 'var(--font-sm)' }}>
-                Your Name
-              </label>
-              <input
-                type="text"
-                value={myName}
-                onChange={(e) => onNameChange(e.target.value.slice(0, 16))}
-                placeholder="Enter your name"
-                className="w-full px-4 py-2.5 rounded-lg border-2 border-amber-700/30 bg-white/80 focus:border-amber-600 focus:outline-none font-serif text-amber-900"
-                style={{ fontSize: 'var(--font-base)' }}
-                maxLength={16}
-              />
-            </div>
+           <div className="mb-5">
+  <div className="flex items-center justify-between mb-1">
+    <label
+      className="text-amber-900 font-serif font-bold"
+      style={{ fontSize: 'var(--font-sm)' }}
+    >
+      Your Name
+    </label>
+
+    <button
+      onClick={() => setShowSettings(true)}
+      className="
+        flex items-center
+        justify-center
+        w-9
+        h-9
+        rounded-full
+        bg-purple-900
+        text-amber-200
+        hover:bg-purple-800
+        transition-colors
+      "
+      title="Settings"
+    >
+      ⚙
+    </button>
+  </div>
+
+  <input
+    type="text"
+    value={myName}
+    onChange={(e) => onNameChange(e.target.value.slice(0, 16))}
+    placeholder="Enter your name"
+    className="w-full px-4 py-2.5 rounded-lg border-2 border-amber-700/30 bg-white/80 focus:border-amber-600 focus:outline-none font-serif text-amber-900"
+    style={{ fontSize: 'var(--font-base)' }}
+    maxLength={16}
+  />
+</div>
+
 
             {/* =============== MAIN MENU =============== */}
             {screen === 'menu' && (
