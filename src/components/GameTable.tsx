@@ -66,6 +66,8 @@ interface GameTableProps {
   onSfxEnabled: (v: boolean) => void;
   sfxVolume: number;
   onSfxVolume: (v: number) => void;
+  timerSeconds: number;
+  onTimerSeconds: (seconds: number) => void;
 }
 
 /** Polar seat around the oval table. angle 0 = top, clockwise. Human sits at 180° (bottom). */
@@ -115,6 +117,8 @@ export function GameTable(props: GameTableProps) {
     onSfxEnabled,
     sfxVolume,
     onSfxVolume,
+    timerSeconds,
+    onTimerSeconds,
   } = props;
 
   const myPlayer = state.players.find((p) => p.id === myPlayerId);
@@ -126,7 +130,11 @@ export function GameTable(props: GameTableProps) {
   const [showChat, setShowChat] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [showHostMenu, setShowHostMenu] = useState(false);  
+  const [showHostMenu, setShowHostMenu] = useState(false); 
+  const [showTimerMenu, setShowTimerMenu] = useState(false);
+  const [showKickMenu, setShowKickMenu] = useState(false);
+  const [selectedKickPlayer, setSelectedKickPlayer] =
+    useState<string | null>(null);
   const [unread, setUnread] = useState(0);
   const [dealTick, setDealTick] = useState(0);
   const [seatsRevealed, setSeatsRevealed] = useState(0);
@@ -705,32 +713,182 @@ className="w-full py-2 rounded-lg bg-red-800 hover:bg-red-700 text-red-50 font-s
       </h2>
 
       <div className="flex flex-col gap-2">
+ 
+{onReturnToLobby && (
+<button
+onClick={() => {
+setShowHostMenu(false);
+onReturnToLobby();
+}}
 
-  {onReturnToLobby && (
-    <button
-      onClick={() => {
-        setShowHostMenu(false);
-        onReturnToLobby();
-      }}
-      className="w-full py-2 rounded-lg bg-purple-800 hover:bg-purple-700 text-amber-100 font-serif font-bold"
-    >
-      🏠 Return To Lobby
-    </button>
-  )}
 
-  <button
-    onClick={() => setShowHostMenu(false)}
-    className="w-full py-2 rounded-lg bg-stone-300 hover:bg-stone-400 text-stone-900 font-serif font-bold"
-  >
-    Close
-  </button>
+className="w-full py-2 rounded-lg bg-purple-800 hover:bg-purple-700 text-amber-100 font-serif font-bold"
+>
+🏠 Return To Lobby
+</button>
+)}
+ 
+<button
+onClick={() => {
+setShowHostMenu(false);
+setShowTimerMenu(true);
+}}
+className="w-full py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-purple-950 font-serif font-bold"
+>
+⏱ Timer Settings
+</button>
+ 
+<button
+onClick={() => {
+setShowHostMenu(false);
+setShowKickMenu(true);
+}}
+className="w-full py-2 rounded-lg bg-red-700 hover:bg-red-600 text-white font-serif font-bold"
+>
+👢 Player Management
+</button>
+ 
+<button
+onClick={() => setShowHostMenu(false)}
+className="w-full py-2 rounded-lg bg-stone-300 hover:bg-stone-400 text-stone-900 font-serif font-bold"
+>
+Close
+</button>
+ 
+</div>
 
 </div>
 
     </div>
-  </div>
 )}
 
+{showTimerMenu && (
+  <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
+    <div
+      className="absolute inset-0 bg-black/60"
+      onClick={() => setShowTimerMenu(false)}
+    />
+
+    <div className="relative bg-gradient-to-br from-amber-50 to-amber-100 rounded-2xl border-4 border-amber-900/40 p-6 max-w-sm w-full">
+
+      <h2 className="font-heading font-black text-purple-900 italic mb-2 text-center">
+  ⏱ Timer Settings
+</h2>
+
+<p className="text-center text-purple-900 mb-4 font-serif">
+  Current: {timerSeconds === 0 ? 'OFF' : `${timerSeconds} seconds`}
+</p>
+
+      <div className="flex flex-col gap-2">
+
+        {[0, 15, 30, 45, 60, 90, 120].map((secs) => (
+          <button
+            key={secs}
+            onClick={() => {
+              onTimerSeconds(secs);
+              setShowTimerMenu(false);
+            }}
+            className="w-full py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-purple-950 font-serif font-bold"
+          >
+            {secs === 0 ? 'OFF' : `${secs} seconds`}
+          </button>
+        ))}
+
+        <button
+          onClick={() => setShowTimerMenu(false)}
+          className="w-full py-2 rounded-lg bg-stone-300 hover:bg-stone-400 text-stone-900 font-serif font-bold"
+        >
+          Close
+        </button>
+
+      </div>
+    </div>
+  </div>
+)}
+{showKickMenu && (
+  <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
+    <div
+      className="absolute inset-0 bg-black/60"
+      onClick={() => {
+        setShowKickMenu(false);
+        setSelectedKickPlayer(null);
+      }}
+    />
+
+    <div className="relative bg-gradient-to-br from-amber-50 to-amber-100 rounded-2xl border-4 border-amber-900/40 p-6 max-w-sm w-full">
+
+      <h2 className="font-heading font-black text-purple-900 italic mb-4 text-center">
+        👢 Player Management
+      </h2>
+
+      {!selectedKickPlayer ? (
+        <div className="flex flex-col gap-2">
+
+          {state.players
+            .filter((p) => p.id !== myPlayerId)
+            .map((p) => (
+              <button
+                key={p.id}
+                onClick={() => setSelectedKickPlayer(p.id)}
+                className="w-full py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-purple-950 font-serif font-bold"
+              >
+                {p.name}
+              </button>
+            ))}
+
+          <button
+            onClick={() => setShowKickMenu(false)}
+            className="w-full py-2 rounded-lg bg-stone-300 hover:bg-stone-400 text-stone-900 font-serif font-bold"
+          >
+            Close
+          </button>
+
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+
+          <p className="text-center font-serif text-purple-900">
+            Manage {
+              state.players.find(
+                (p) => p.id === selectedKickPlayer
+              )?.name
+            }
+          </p>
+
+          <button
+            onClick={() => {
+              onKick?.(selectedKickPlayer, 'ai');
+              setSelectedKickPlayer(null);
+              setShowKickMenu(false);
+            }}
+            className="w-full py-2 rounded-lg bg-purple-800 hover:bg-purple-700 text-amber-100 font-serif font-bold"
+          >
+            🤖 Replace With AI
+          </button>
+
+          <button
+            onClick={() => {
+              onKick?.(selectedKickPlayer, 'remove');
+              setSelectedKickPlayer(null);
+              setShowKickMenu(false);
+            }}
+            className="w-full py-2 rounded-lg bg-red-700 hover:bg-red-600 text-white font-serif font-bold"
+          >
+            🚪 Remove From Table
+          </button>
+
+          <button
+            onClick={() => setSelectedKickPlayer(null)}
+            className="w-full py-2 rounded-lg bg-stone-300 hover:bg-stone-400 text-stone-900 font-serif font-bold"
+          >
+            Back
+          </button>
+
+        </div>
+      )}
+    </div>
+  </div>
+)}
       {showLeaveDialog && (
         <LeaveDialog
           canScheduleLeave={!isHost && !!onScheduleLeave}

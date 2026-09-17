@@ -1630,6 +1630,8 @@ localStorage.setItem('sfxVolume', String(v));
         state={state}
         myPlayerId={myId}
         isHost={isHost}
+        timerSeconds={timerSecs}
+onTimerSeconds={setTimerSecs}
         isSpectator={isSpectator}
         revolutionDeclined={declinedRevolution === state.handNumber}
         chat={chat}
