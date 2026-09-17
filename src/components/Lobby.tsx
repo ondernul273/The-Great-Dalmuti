@@ -85,6 +85,8 @@ interface LobbyProps {
   /* card artwork set, synced table-wide */
   currentCardSet: string;
   onCardSet: (set: string) => void;
+  musicEnabled: boolean;
+  onMusicEnabled: (v: boolean) => void;
 }
 
 type Screen =
@@ -150,7 +152,9 @@ export function Lobby(props: LobbyProps) {
   onBanquetAddAI,
   onBanquetRemoveAI,
   currentCardSet,
-  onCardSet,
+onCardSet,
+musicEnabled,
+onMusicEnabled,
 } = props;
 
   const [screen, setScreen] = useState<Screen>('menu');
@@ -230,9 +234,32 @@ export function Lobby(props: LobbyProps) {
   Settings
 </h2>
 
-      <p className="text-amber-900 font-serif">
-        Settings menu coming soon.
-      </p>
+      <div className="space-y-4">
+
+  <div className="flex items-center justify-between">
+    <span className="font-serif font-bold text-amber-900">
+      Music
+    </span>
+
+    <button
+      onClick={() => onMusicEnabled(!musicEnabled)}
+      className={`relative w-14 h-8 rounded-full transition-colors ${
+        musicEnabled
+          ? 'bg-emerald-600'
+          : 'bg-stone-400'
+      }`}
+    >
+      <span
+        className={`absolute top-1 w-6 h-6 rounded-full bg-white transition-all ${
+          musicEnabled
+            ? 'left-7'
+            : 'left-1'
+        }`}
+      />
+    </button>
+  </div>
+
+</div>
 
       <button
   onClick={() => setShowSettings(false)}

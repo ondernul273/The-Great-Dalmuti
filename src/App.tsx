@@ -133,6 +133,9 @@ export default function App() {
   const [myName, setMyName] = useState('Player');
   const [mode, setMode] = useState<GameMode>('none');
   const [state, setState] = useState<GameState | null>(null);
+  const [musicEnabled, setMusicEnabled] = useState(
+  localStorage.getItem('musicEnabled') !== 'false'
+);
   const [lobbyError, setLobbyError] = useState<string | null>(null);
   const [peerNames, setPeerNames] = useState<Record<string, string>>({});
   const [declinedRevolution, setDeclinedRevolution] = useState<number>(-1);
@@ -1540,6 +1543,11 @@ document.removeEventListener('keydown', unlock);
           onBanquetRemoveAI={sock.removeAI}
           currentCardSet={getActiveSet()}
           onCardSet={handleCardSetChoice}
+          musicEnabled={musicEnabled}
+onMusicEnabled={(v) => {
+  setMusicEnabled(v);
+  localStorage.setItem('musicEnabled', String(v));
+}}
         />
       </>
     );
