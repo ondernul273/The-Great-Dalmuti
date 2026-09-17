@@ -10,7 +10,7 @@ import type {
 } from './types';
 import { CLIENT_ID } from './identity';
 import { TAUNTS } from '../taunts';
-import { playTaunt } from '../playTaunt';
+
 
 /**
  * Transport #2 — "Banquet Browser": a Socket.IO relay server with public
@@ -149,17 +149,13 @@ export function useSocketLobby({
   system?: boolean;
 }) => {
 
-  if (p.taunt && TAUNTS[p.taunt]) {
-    playTaunt(p.taunt);
-  }
-
   cbRef.current.onLobbyChat({
     name: p.name,
     text: p.text,
     system: p.system
   });
+
 });
-``
     socket.on('lobby:started', () => {
       log('lobby:started');
       cbRef.current.onStarted?.();
@@ -294,9 +290,7 @@ export function useSocketLobby({
     taunt: trimmed,
   });
 
-  if (TAUNTS[trimmed]) {
-    playTaunt(trimmed);
-  }
+  // geluid wordt centraal afgehandeld in App.tsx
 }, []);
 
 
