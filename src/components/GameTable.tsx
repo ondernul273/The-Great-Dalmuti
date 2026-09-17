@@ -608,9 +608,28 @@ className="w-full py-2 rounded-lg bg-red-800 hover:bg-red-700 text-red-50 font-s
         Host Menu
       </h2>
 
-      <p className="text-center text-amber-900 font-serif">
-        Host controls will be moved here.
-      </p>
+      <div className="flex flex-col gap-2">
+
+  {onReturnToLobby && (
+    <button
+      onClick={() => {
+        setShowHostMenu(false);
+        onReturnToLobby();
+      }}
+      className="w-full py-2 rounded-lg bg-purple-800 hover:bg-purple-700 text-amber-100 font-serif font-bold"
+    >
+      🏠 Return To Lobby
+    </button>
+  )}
+
+  <button
+    onClick={() => setShowHostMenu(false)}
+    className="w-full py-2 rounded-lg bg-stone-300 hover:bg-stone-400 text-stone-900 font-serif font-bold"
+  >
+    Close
+  </button>
+
+</div>
 
       <button
         onClick={() => setShowHostMenu(false)}
