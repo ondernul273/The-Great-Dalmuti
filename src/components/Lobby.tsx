@@ -35,6 +35,7 @@ import {
   Trophy,
   Layers,
   Eye,
+  Settings,
 } from 'lucide-react';
 
 interface LobbyProps {
@@ -215,22 +216,32 @@ export function Lobby(props: LobbyProps) {
 
 {showSettings && (
   <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60">
-    <div className="bg-amber-50 rounded-2xl p-6 w-[450px] max-w-[90vw] border-4 border-amber-700">
+    <div
+  className="rounded-2xl p-6 w-[450px] max-w-[90vw] border-4 border-amber-700 shadow-2xl"
+  style={{
+    background:
+      'linear-gradient(160deg, rgba(253,248,236,0.98) 0%, rgba(236,210,150,0.95) 100%)',
+  }}
+>
 
-      <h2 className="text-2xl font-heading font-bold text-purple-900 mb-4">
-        Settings
-      </h2>
+
+      <h2 className="flex items-center gap-3 text-2xl font-heading font-black text-purple-900 mb-4">
+  <Settings size="1.2em" />
+  Settings
+</h2>
 
       <p className="text-amber-900 font-serif">
         Settings menu coming soon.
       </p>
 
       <button
-        onClick={() => setShowSettings(false)}
-        className="mt-6 w-full py-2 rounded-lg bg-purple-800 text-amber-100"
-      >
-        Close
-      </button>
+  onClick={() => setShowSettings(false)}
+  className="mt-6 w-full py-2 rounded-lg bg-purple-800 hover:bg-purple-700 text-amber-100 flex items-center justify-center gap-2"
+>
+  <X size="1em" />
+  Close
+</button>
+
 
     </div>
   </div>
