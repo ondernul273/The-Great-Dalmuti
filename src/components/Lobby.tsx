@@ -87,6 +87,8 @@ interface LobbyProps {
   onCardSet: (set: string) => void;
   musicEnabled: boolean;
   onMusicEnabled: (v: boolean) => void;
+  musicVolume: number;
+onMusicVolume: (v: number) => void;
   sfxEnabled: boolean;
 onSfxEnabled: (v: boolean) => void;
 }
@@ -157,6 +159,9 @@ export function Lobby(props: LobbyProps) {
 onCardSet,
 musicEnabled,
 onMusicEnabled,
+musicVolume,
+onMusicVolume,
+
 sfxEnabled,
 onSfxEnabled,
 } = props;
@@ -264,7 +269,26 @@ onSfxEnabled,
   </div>
 
 </div>
+<div>
+  <div className="flex justify-between mb-1">
+    <span className="font-serif text-amber-900">
+      Music Volume
+    </span>
 
+    <span className="font-serif font-bold text-purple-900">
+      {musicVolume}%
+    </span>
+  </div>
+
+  <input
+    type="range"
+    min="0"
+    max="100"
+    value={musicVolume}
+    onChange={(e) => onMusicVolume(Number(e.target.value))}
+    className="w-full"
+  />
+</div>
 <div className="flex items-center justify-between">
   <span className="font-serif font-bold text-amber-900">
     Sound Effects

@@ -43,11 +43,12 @@ import { getActiveSet, rememberSet, setThemeOverride, subscribeToCardArt } from 
 import { TAUNTS } from './taunts';
 import { playTaunt } from './playTaunt.ts';
 import {
-  playMenuMusic,
-  playGameMusic,
-  unlockAudio,
-  pauseMusic,
-  resumeMusic,
+playMenuMusic,
+playGameMusic,
+unlockAudio,
+pauseMusic,
+resumeMusic,
+setMusicVolume as setAudioMusicVolume,
 } from './audio.ts';
 type GameMode =
   | 'none'
@@ -136,6 +137,15 @@ export default function App() {
   const [musicEnabled, setMusicEnabled] = useState(
   localStorage.getItem('musicEnabled') !== 'false'
 );
+const [musicVolume, setMusicVolume] = useState(
+  Number(localStorage.getItem('musicVolume') ?? '70')
+);
+useEffect(() => {
+  setMusicVolume(
+    Number(localStorage.getItem('musicVolume') ?? '70')
+  );
+}, []);
+
 const [sfxEnabled, setSfxEnabled] = useState(
   localStorage.getItem('sfxEnabled') !== 'false'
 );
@@ -183,12 +193,9 @@ const [sfxEnabled, setSfxEnabled] = useState(
 
   const pushLobbyChat = useCallback((line: Omit<LobbyChatLine, 'id' | 'ts'>) => {
 
-  console.log('LOBBY CHAT:', line.text);
-
   const match = line.text.match(/^\[(.+?)\]/);
 
   if (match && sfxEnabled) {
-    console.log('PLAY LOBBY TAUNT:', match[1]);
 
     if (TAUNTS[match[1]]) {
       playTaunt(match[1]);
@@ -399,7 +406,6 @@ taunt?: string;
 system?: boolean;
 id?: string;
 };
-console.log('PLAY REMOTE TAUNT', p.taunt, sfxEnabled);
 
 if (p.taunt && TAUNTS[p.taunt] && sfxEnabled) {
   playTaunt(p.taunt);
@@ -1081,7 +1087,6 @@ if (p.taunt && TAUNTS[p.taunt] && sfxEnabled) {
       id,
     });
 
-    console.log('PLAY OWN TAUNT', trimmed, sfxEnabled);
  
 if (TAUNTS[trimmed] && sfxEnabled) {
 playTaunt(trimmed);
@@ -1462,6 +1467,13 @@ useEffect(() => {
   }
 }, [mode, state, musicEnabled]);
 
+useEffect(() => {
+  setAudioMusicVolume(musicVolume / 100);
+}, [musicVolume]);
+
+useEffect(() => {
+  setMusicVolume(musicVolume / 100);
+}, [musicVolume]);
 
 
 useEffect(() => {
@@ -1572,7 +1584,7 @@ document.removeEventListener('keydown', unlock);
           onBanquetRemoveAI={sock.removeAI}
           currentCardSet={getActiveSet()}
           onCardSet={handleCardSetChoice}
-          musicEnabled={musicEnabled}
+musicEnabled={musicEnabled}
 onMusicEnabled={(v) => {
   setMusicEnabled(v);
   localStorage.setItem('musicEnabled', String(v));
@@ -1584,10 +1596,14 @@ onMusicEnabled={(v) => {
   }
 }}
 
+musicVolume={musicVolume}
+onMusicVolume={(v) => {
+  setMusicVolume(v);
+  localStorage.setItem('musicVolume', String(v));
+}}
+
 sfxEnabled={sfxEnabled}
 onSfxEnabled={(v) => {
-  console.log('SFX TOGGLED:', v);
-
   setSfxEnabled(v);
   localStorage.setItem('sfxEnabled', String(v));
 }}
