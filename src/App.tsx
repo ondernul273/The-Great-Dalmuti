@@ -140,11 +140,6 @@ export default function App() {
 const [musicVolume, setMusicVolume] = useState(
   Number(localStorage.getItem('musicVolume') ?? '70')
 );
-useEffect(() => {
-  setMusicVolume(
-    Number(localStorage.getItem('musicVolume') ?? '70')
-  );
-}, []);
 
 const [sfxEnabled, setSfxEnabled] = useState(
   localStorage.getItem('sfxEnabled') !== 'false'
@@ -1470,11 +1465,6 @@ useEffect(() => {
 useEffect(() => {
   setAudioMusicVolume(musicVolume / 100);
 }, [musicVolume]);
-
-useEffect(() => {
-  setMusicVolume(musicVolume / 100);
-}, [musicVolume]);
-
 
 useEffect(() => {
 const handleVisibilityChange = () => {
