@@ -30,10 +30,12 @@ const GAME_TRACKS = [
 let currentTrackIndex = 0;
 
 export function playMenuMusic() {
-    if (!audioUnlocked) return;
+  if (!audioUnlocked) return;
   if (currentMode === 'menu') return;
+
+  stopMusic();
+
   currentMode = 'menu';
-    stopMusic();
 
   currentMusic = new Audio('/music/menu.mp3');
   currentMusic.loop = true;
@@ -44,9 +46,11 @@ export function playMenuMusic() {
 
 export function playGameMusic() {
   if (!audioUnlocked) return;
-  if (currentMode === 'game') return; 
-  currentMode = 'game';
+  if (currentMode === 'game') return;
+
   stopMusic();
+
+  currentMode = 'game';
 
   currentTrackIndex = Math.floor(
     Math.random() * GAME_TRACKS.length
@@ -56,7 +60,9 @@ export function playGameMusic() {
 }
 
 function playCurrentTrack() {
-  currentMusic = new Audio(GAME_TRACKS[currentTrackIndex]);
+  currentMusic = new Audio(
+    GAME_TRACKS[currentTrackIndex]
+  );
 
   currentMusic.volume = musicVolume;
 
