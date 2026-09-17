@@ -109,6 +109,8 @@ export function GameTable(props: GameTableProps) {
   const [showScore, setShowScore] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showHostMenu, setShowHostMenu] = useState(false);  
   const [unread, setUnread] = useState(0);
   const [dealTick, setDealTick] = useState(0);
   const [seatsRevealed, setSeatsRevealed] = useState(0);
@@ -517,31 +519,110 @@ export function GameTable(props: GameTableProps) {
       </h2>
 
       <div className="flex flex-col gap-2">
-
-        <button
-          onClick={() => {
-            setShowMenu(false);
-            setShowScore(true);
-          }}
-          className="w-full py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-purple-950 font-serif font-bold"
-        >
-          🏆 Scores
-        </button>
-
-        <button
-          onClick={() => {
-            setShowMenu(false);
-            setShowLeaveDialog(true);
-          }}
-          className="w-full py-2 rounded-lg bg-red-800 hover:bg-red-700 text-red-50 font-serif font-bold"
-        >
-          🚪 Leave Table
-        </button>
-
-      </div>
+ 
+<button
+onClick={() => {
+setShowMenu(false);
+setShowScore(true);
+}}
+className="w-full py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-purple-950 font-serif font-bold"
+>
+🏆 Scores
+</button>
+ 
+<button
+onClick={() => {
+setShowMenu(false);
+setShowSettings(true);
+}}
+className="w-full py-2 rounded-lg bg-purple-800 hover:bg-purple-700 text-amber-100 font-serif font-bold"
+>
+⚙ Settings
+</button>
+ 
+{isHost && (
+<button
+onClick={() => {
+setShowMenu(false);
+setShowHostMenu(true);
+}}
+className="w-full py-2 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-serif font-bold"
+>
+👑 Host Menu
+</button>
+)}
+ 
+<button
+onClick={() => {
+setShowMenu(false);
+setShowLeaveDialog(true);
+}}
+className="w-full py-2 rounded-lg bg-red-800 hover:bg-red-700 text-red-50 font-serif font-bold"
+>
+🚪 Leave Table
+</button>
+ 
+</div>
     </div>
   </div>
 )}
+
+{showSettings && (
+  <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
+    <div
+      className="absolute inset-0 bg-black/60"
+      onClick={() => setShowSettings(false)}
+    />
+
+    <div className="relative bg-gradient-to-br from-amber-50 to-amber-100 rounded-2xl border-4 border-amber-900/40 p-6 max-w-sm w-full">
+
+      <h2 className="font-heading font-black text-purple-900 italic mb-4 text-center">
+        Settings
+      </h2>
+
+      <p className="text-center text-amber-900 font-serif">
+        Settings menu coming here.
+      </p>
+
+      <button
+        onClick={() => setShowSettings(false)}
+        className="mt-4 w-full py-2 bg-stone-200 hover:bg-stone-300 rounded-lg font-serif"
+      >
+        Close
+      </button>
+
+    </div>
+  </div>
+)}
+
+{showHostMenu && (
+  <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
+    <div
+      className="absolute inset-0 bg-black/60"
+      onClick={() => setShowHostMenu(false)}
+    />
+
+    <div className="relative bg-gradient-to-br from-amber-50 to-amber-100 rounded-2xl border-4 border-amber-900/40 p-6 max-w-sm w-full">
+
+      <h2 className="font-heading font-black text-purple-900 italic mb-4 text-center">
+        Host Menu
+      </h2>
+
+      <p className="text-center text-amber-900 font-serif">
+        Host controls will be moved here.
+      </p>
+
+      <button
+        onClick={() => setShowHostMenu(false)}
+        className="mt-4 w-full py-2 bg-stone-200 hover:bg-stone-300 rounded-lg font-serif"
+      >
+        Close
+      </button>
+
+    </div>
+  </div>
+)}
+
       {showLeaveDialog && (
         <LeaveDialog
           canScheduleLeave={!isHost && !!onScheduleLeave}
