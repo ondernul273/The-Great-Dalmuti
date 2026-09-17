@@ -1652,6 +1652,14 @@ localStorage.setItem('sfxVolume', String(v));
         onDeclineRevolution={handleDeclineRevolution}
         onNextHand={handleNextHand}
         onBackToLobby={handleBackToLobby}
+        musicEnabled={musicEnabled}
+        onMusicEnabled={setMusicEnabled}
+        musicVolume={musicVolume}
+        onMusicVolume={setMusicVolume} 
+        sfxEnabled={sfxEnabled}
+        onSfxEnabled={setSfxEnabled}
+        sfxVolume={sfxVolume}
+        onSfxVolume={setSfxVolume}
       />
     </ErrorBoundary>
   );

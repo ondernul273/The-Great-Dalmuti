@@ -58,6 +58,14 @@ interface GameTableProps {
   onDeclineRevolution: () => void;
   onNextHand: () => void;
   onBackToLobby?: () => void;
+  musicEnabled: boolean;
+  onMusicEnabled: (v: boolean) => void;
+  musicVolume: number;
+  onMusicVolume: (v: number) => void;
+  sfxEnabled: boolean;
+  onSfxEnabled: (v: boolean) => void;
+  sfxVolume: number;
+  onSfxVolume: (v: number) => void;
 }
 
 /** Polar seat around the oval table. angle 0 = top, clockwise. Human sits at 180° (bottom). */
@@ -99,6 +107,14 @@ export function GameTable(props: GameTableProps) {
     onDeclineRevolution,
     onNextHand,
     onBackToLobby,
+    musicEnabled,
+    onMusicEnabled, 
+    musicVolume,
+    onMusicVolume,
+    sfxEnabled,
+    onSfxEnabled,
+    sfxVolume,
+    onSfxVolume,
   } = props;
 
   const myPlayer = state.players.find((p) => p.id === myPlayerId);
@@ -577,19 +593,99 @@ className="w-full py-2 rounded-lg bg-red-800 hover:bg-red-700 text-red-50 font-s
     <div className="relative bg-gradient-to-br from-amber-50 to-amber-100 rounded-2xl border-4 border-amber-900/40 p-6 max-w-sm w-full">
 
       <h2 className="font-heading font-black text-purple-900 italic mb-4 text-center">
-        Settings
+        ⚙ Settings
       </h2>
 
-      <p className="text-center text-amber-900 font-serif">
-        Settings menu coming here.
-      </p>
+      <div className="space-y-4">
 
-      <button
-        onClick={() => setShowSettings(false)}
-        className="mt-4 w-full py-2 bg-stone-200 hover:bg-stone-300 rounded-lg font-serif"
-      >
-        Close
-      </button>
+        <div className="flex items-center justify-between">
+          <span className="font-serif font-bold text-amber-900">
+            Music
+          </span>
+
+          <button
+            onClick={() => onMusicEnabled(!musicEnabled)}
+            className={`relative w-14 h-8 rounded-full transition-colors ${
+              musicEnabled ? 'bg-emerald-600' : 'bg-stone-400'
+            }`}
+          >
+            <span
+              className={`absolute top-1 w-6 h-6 rounded-full bg-white transition-all ${
+                musicEnabled ? 'left-7' : 'left-1'
+              }`}
+            />
+          </button>
+        </div>
+
+        <div>
+          <div className="flex justify-between mb-1">
+            <span className="font-serif text-amber-900">
+              Music Volume
+            </span>
+
+            <span className="font-serif font-bold text-purple-900">
+              {musicVolume}%
+            </span>
+          </div>
+
+          <input
+            type="range"
+            min="0"
+            max="100"
+            value={musicVolume}
+            onChange={(e) => onMusicVolume(Number(e.target.value))}
+            className="w-full"
+          />
+        </div>
+
+        <div className="flex items-center justify-between">
+          <span className="font-serif font-bold text-amber-900">
+            Sound Effects
+          </span>
+
+          <button
+            onClick={() => onSfxEnabled(!sfxEnabled)}
+            className={`relative w-14 h-8 rounded-full transition-colors ${
+              sfxEnabled ? 'bg-emerald-600' : 'bg-stone-400'
+            }`}
+          >
+            <span
+              className={`absolute top-1 w-6 h-6 rounded-full bg-white transition-all ${
+                sfxEnabled ? 'left-7' : 'left-1'
+              }`}
+            />
+          </button>
+        </div>
+
+        <div>
+          <div className="flex justify-between mb-1">
+            <span className="font-serif text-amber-900">
+              SFX Volume
+            </span>
+
+            <span className="font-serif font-bold text-purple-900">
+              {sfxVolume}%
+            </span>
+          </div>
+
+          <input
+            type="range"
+            min="0"
+            max="100"
+            value={sfxVolume}
+            onChange={(e) => onSfxVolume(Number(e.target.value))}
+            className="w-full"
+          />
+        </div>
+
+        <button
+          onClick={() => setShowSettings(false)}
+          className="mt-4 w-full py-2 rounded-lg bg-purple-800 hover:bg-purple-700 text-amber-100"
+        >
+          Close
+        </button>
+
+      </div>
 
     </div>
   </div>
@@ -630,13 +726,6 @@ className="w-full py-2 rounded-lg bg-red-800 hover:bg-red-700 text-red-50 font-s
   </button>
 
 </div>
-
-      <button
-        onClick={() => setShowHostMenu(false)}
-        className="mt-4 w-full py-2 bg-stone-200 hover:bg-stone-300 rounded-lg font-serif"
-      >
-        Close
-      </button>
 
     </div>
   </div>
