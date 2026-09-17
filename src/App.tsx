@@ -182,8 +182,25 @@ const [sfxEnabled, setSfxEnabled] = useState(
   );
 
   const pushLobbyChat = useCallback((line: Omit<LobbyChatLine, 'id' | 'ts'>) => {
-    setLobbyChat((prev) => [...prev.slice(-120), { ...line, id: nextChatId(), ts: Date.now() }]);
-  }, []);
+
+  console.log('LOBBY CHAT:', line.text);
+
+  const match = line.text.match(/^\[(.+?)\]/);
+
+  if (match && sfxEnabled) {
+    console.log('PLAY LOBBY TAUNT:', match[1]);
+
+    if (TAUNTS[match[1]]) {
+      playTaunt(match[1]);
+    }
+  }
+
+  setLobbyChat((prev) => [
+    ...prev.slice(-120),
+    { ...line, id: nextChatId(), ts: Date.now() }
+  ]);
+}, [sfxEnabled]);
+
 
   /* =====================================================================
      TRANSPORT ABSTRACTION
