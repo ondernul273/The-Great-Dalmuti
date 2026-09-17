@@ -87,6 +87,8 @@ interface LobbyProps {
   onCardSet: (set: string) => void;
   musicEnabled: boolean;
   onMusicEnabled: (v: boolean) => void;
+  sfxEnabled: boolean;
+onSfxEnabled: (v: boolean) => void;
 }
 
 type Screen =
@@ -155,6 +157,8 @@ export function Lobby(props: LobbyProps) {
 onCardSet,
 musicEnabled,
 onMusicEnabled,
+sfxEnabled,
+onSfxEnabled,
 } = props;
 
   const [screen, setScreen] = useState<Screen>('menu');
@@ -259,6 +263,29 @@ onMusicEnabled,
     </button>
   </div>
 
+</div>
+
+<div className="flex items-center justify-between">
+  <span className="font-serif font-bold text-amber-900">
+    Sound Effects
+  </span>
+
+  <button
+    onClick={() => onSfxEnabled(!sfxEnabled)}
+    className={`relative w-14 h-8 rounded-full transition-colors ${
+      sfxEnabled
+        ? 'bg-emerald-600'
+        : 'bg-stone-400'
+    }`}
+  >
+    <span
+      className={`absolute top-1 w-6 h-6 rounded-full bg-white transition-all ${
+        sfxEnabled
+          ? 'left-7'
+          : 'left-1'
+      }`}
+    />
+  </button>
 </div>
 
       <button

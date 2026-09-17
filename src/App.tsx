@@ -136,6 +136,9 @@ export default function App() {
   const [musicEnabled, setMusicEnabled] = useState(
   localStorage.getItem('musicEnabled') !== 'false'
 );
+const [sfxEnabled, setSfxEnabled] = useState(
+  localStorage.getItem('sfxEnabled') !== 'false'
+);
   const [lobbyError, setLobbyError] = useState<string | null>(null);
   const [peerNames, setPeerNames] = useState<Record<string, string>>({});
   const [declinedRevolution, setDeclinedRevolution] = useState<number>(-1);
@@ -379,7 +382,7 @@ taunt?: string;
 system?: boolean;
 id?: string;
 };
-if (p.taunt && TAUNTS[p.taunt]) {
+if (p.taunt && TAUNTS[p.taunt] && sfxEnabled) {
   playTaunt(p.taunt);
 }
         console.log('[CHAT] received', p.id ?? '(no id)', 'mode:', m, 'from:', msg.from);
@@ -1059,9 +1062,9 @@ if (p.taunt && TAUNTS[p.taunt]) {
       id,
     });
 
-    if (TAUNTS[trimmed]) {
-      playTaunt(trimmed);
-    }
+    if (TAUNTS[trimmed] && sfxEnabled) {
+  playTaunt(trimmed);
+}
 
     if (isHostMode(modeRef.current)) {
       netBroadcast('chat', {
@@ -1558,6 +1561,12 @@ onMusicEnabled={(v) => {
   } else {
     resumeMusic();
   }
+}}
+
+sfxEnabled={sfxEnabled}
+onSfxEnabled={(v) => {
+  setSfxEnabled(v);
+  localStorage.setItem('sfxEnabled', String(v));
 }}
         />
       </>
