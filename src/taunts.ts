@@ -6,7 +6,7 @@ export const TAUNTS: Record<string, string> = {
   '5': 'Thank you.',
   '6': 'Oops.',
   '7': 'Ahh!',
-  '8': 'Your attempts are futile.',
+  '8': 'All hail, king of the losers!',
   '9': '*Group cheer*',
   '10': 'Bold move.',
   '11': 'Haha!',
