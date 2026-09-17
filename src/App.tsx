@@ -1453,6 +1453,7 @@ useEffect(() => {
     pauseMusic();
     return;
   }
+  
 
   const inMenu =
     mode === 'none' ||

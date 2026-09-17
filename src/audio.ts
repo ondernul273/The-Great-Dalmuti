@@ -31,7 +31,11 @@ let currentTrackIndex = 0;
 
 export function playMenuMusic() {
   if (!audioUnlocked) return;
-  if (currentMode === 'menu') return;
+
+  if (currentMode === 'menu' && currentMusic) {
+    currentMusic.play().catch(() => {});
+    return;
+  }
 
   stopMusic();
 
@@ -46,7 +50,11 @@ export function playMenuMusic() {
 
 export function playGameMusic() {
   if (!audioUnlocked) return;
-  if (currentMode === 'game') return;
+
+  if (currentMode === 'game' && currentMusic) {
+    currentMusic.play().catch(() => {});
+    return;
+  }
 
   stopMusic();
 
