@@ -1565,9 +1565,12 @@ onMusicEnabled={(v) => {
 
 sfxEnabled={sfxEnabled}
 onSfxEnabled={(v) => {
+  console.log('SFX TOGGLED:', v);
+
   setSfxEnabled(v);
   localStorage.setItem('sfxEnabled', String(v));
 }}
+
         />
       </>
     );
