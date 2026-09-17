@@ -1430,6 +1430,8 @@ useEffect(() => {
   }
 }, [mode]);
 
+
+
 useEffect(() => {
 const handleVisibilityChange = () => {
 if (document.hidden) {
@@ -1449,6 +1451,25 @@ document.removeEventListener(
 'visibilitychange',
 handleVisibilityChange
 );
+};
+}, []);
+
+useEffect(() => {
+const unlock = () => {
+unlockAudio();
+ 
+document.removeEventListener('click', unlock);
+document.removeEventListener('keydown', unlock);
+ 
+playMenuMusic();
+};
+ 
+document.addEventListener('click', unlock);
+document.addEventListener('keydown', unlock);
+ 
+return () => {
+document.removeEventListener('click', unlock);
+document.removeEventListener('keydown', unlock);
 };
 }, []);
 
